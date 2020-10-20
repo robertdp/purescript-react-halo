@@ -11,30 +11,14 @@ import React.Halo.Component (Spec)
 import React.Halo.Component.State (createInitialState)
 import React.Halo.Eval (handleAction, handleUpdate, runFinalize, runInitialize)
 
-component ::
-  forall state action props.
-  String ->
-  Spec props state action Aff ->
-  Effect (props -> JSX)
+component :: forall state action props. String -> Spec props state action Aff -> Effect (props -> JSX)
 component name spec@{ init, render } =
   React.component name \props -> React.do
     state /\ setState <- React.useState' init
-    halo <-
-      React.useMemo unit \_ ->
-        unsafePerformEffect do
-          createInitialState spec setState props
-    React.useEffectOnce do
-      runInitialize halo props
-      pure do
-        runFinalize halo
-    React.useEffectAlways do
-      handleUpdate halo props
-      mempty
+    halo <- React.useMemo unit \_ -> unsafePerformEffect (createInitialState spec setState props)
+    React.useEffectOnce (runInitialize halo props *> pure (runFinalize halo))
+    React.useEffectAlways (handleUpdate halo props *> mempty)
     pure (render { props, state, send: handleAction halo })
 
-component_ ::
-  forall state action.
-  String ->
-  Spec Unit state action Aff ->
-  Effect JSX
+component_ :: forall state action. String -> Spec Unit state action Aff -> Effect JSX
 component_ name spec = flap (component name spec) unit
