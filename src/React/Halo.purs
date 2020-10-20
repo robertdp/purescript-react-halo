@@ -5,9 +5,13 @@ module React.Halo
   ) where
 
 import Prelude
+import Control.Monad.State.Class (get, gets, modify, modify_, put, state) as Exports
+import Control.Monad.Trans.Class (lift) as Exports
 import Data.Tuple.Nested ((/\))
 import Effect (Effect)
+import Effect.Class (liftEffect) as Exports
 import Effect.Aff (Aff)
+import Effect.Aff.Class (liftAff) as Exports
 import Effect.Unsafe (unsafePerformEffect)
 import React.Basic.Hooks (JSX)
 import React.Basic.Hooks as React
