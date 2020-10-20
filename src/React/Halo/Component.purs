@@ -7,7 +7,7 @@ import React.Halo.Component.Control (HaloM)
 
 data Lifecycle props action
   = Initialize props
-  | Props props props
+  | Update props props
   | Action action
   | Finalize
 

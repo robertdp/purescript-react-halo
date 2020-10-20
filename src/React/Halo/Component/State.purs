@@ -10,27 +10,28 @@ import Effect.Ref as Ref
 import React.Halo.Component (Spec)
 import React.Halo.Component.Control (ForkId, SubscriptionId)
 
-newtype StateRef props state action
-  = StateRef (Ref (State props state action))
+newtype State props state action
+  = State
+  { component :: Spec props state action Aff
+  , render :: state -> Effect Unit
+  , unmounted :: Ref Boolean
+  , props :: Ref props
+  , state :: Ref state
+  , fresh :: Ref Int
+  , subscriptions :: Ref (Map SubscriptionId (Effect Unit))
+  , forks :: Ref (Map ForkId (Fiber Unit))
+  }
 
-type State props state action
-  = { component :: Spec props state action Aff
-    , props :: props
-    , state :: state
-    , fresh :: Ref Int
-    , subscriptions :: Ref (Map SubscriptionId (Effect Unit))
-    , forks :: Ref (Map ForkId (Fiber Unit))
-    }
-
-makeState :: forall props state action. Spec props state action Aff -> props -> state -> Effect (StateRef props state action)
-makeState component props state = do
+createInitialState :: forall props state action. Spec props state action Aff -> (state -> Effect Unit) -> props -> state -> Effect (State props state action)
+createInitialState component render props' state' = do
+  unmounted <- Ref.new false
   fresh' <- Ref.new 0
+  props <- Ref.new props'
+  state <- Ref.new state'
   subscriptions <- Ref.new Map.empty
   forks <- Ref.new Map.empty
-  stateRef <- Ref.new { component, props, state, fresh: fresh', subscriptions, forks }
-  pure (StateRef stateRef)
+  pure $ State { component, render, unmounted, props, state, fresh: fresh', subscriptions, forks }
 
-fresh :: forall props state action a. (Int -> a) -> StateRef props state action -> Effect a
-fresh f (StateRef stateRef) = do
-  state <- Ref.read stateRef
+fresh :: forall props state action a. (Int -> a) -> State props state action -> Effect a
+fresh f (State state) = do
   Ref.modify' (\a -> { state: a + 1, value: f a }) state.fresh
