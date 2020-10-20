@@ -76,26 +76,26 @@ evalHaloF hs@(HaloState s) = case _ of
     pure a
 
 type EvalSpec props action state m
-  = { initialize :: props -> Maybe action
+  = { onInitialize :: props -> Maybe action
     , onUpdate :: props -> props -> Maybe action
     , onAction :: action -> HaloM props state action m Unit
-    , finalize :: Maybe action
+    , onFinalize :: Maybe action
     }
 
 defaultEval :: forall props action state m. EvalSpec props action state m
 defaultEval =
-  { initialize: \_ -> Nothing
+  { onInitialize: \_ -> Nothing
   , onUpdate: \_ _ -> Nothing
   , onAction: \_ -> pure unit
-  , finalize: Nothing
+  , onFinalize: Nothing
   }
 
 makeEval :: forall props action state m. EvalSpec props action state m -> Lifecycle props action -> HaloM props state action m Unit
 makeEval eval = case _ of
-  Initialize props -> traverse_ eval.onAction $ eval.initialize props
+  Initialize props -> traverse_ eval.onAction $ eval.onInitialize props
   Update old new -> traverse_ eval.onAction $ eval.onUpdate old new
   Action action -> eval.onAction action
-  Finalize -> traverse_ eval.onAction eval.finalize
+  Finalize -> traverse_ eval.onAction eval.onFinalize
 
 runAff :: Aff Unit -> Effect Unit
 runAff = Aff.runAff_ (either throwError pure)
