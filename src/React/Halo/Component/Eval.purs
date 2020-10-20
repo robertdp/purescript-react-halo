@@ -22,58 +22,58 @@ import Unsafe.Reference (unsafeRefEq)
 import Wire.Event as Event
 
 evalHaloM :: forall props state action. HaloState props state action -> HaloM props state action Aff ~> Aff
-evalHaloM hs@(HaloState s) (HaloM halo) = foldFree evalHaloF halo
-  where
-  evalHaloF :: HaloF props state action Aff ~> Aff
-  evalHaloF = case _ of
-    Props k ->
-      liftEffect do
-        props <- Ref.read s.props
-        pure (k props)
-    State f ->
-      liftEffect do
-        state <- Ref.read s.state
-        case f state of
-          Tuple a state'
-            | unsafeRefEq state state' -> do
-              Ref.write state' s.state
-              s.render state'
-              pure a
-            | otherwise -> pure a
-    Subscribe sub k ->
-      liftEffect do
-        sid <- State.fresh SubscriptionId hs
-        unlessM (Ref.read s.unmounted) do
-          canceller <- Event.subscribe (sub sid) (handleAction hs)
-          Ref.modify_ (Map.insert sid canceller) s.subscriptions
-        pure (k sid)
-    Unsubscribe sid a ->
-      liftEffect do
-        canceller <- Map.lookup sid <$> Ref.read s.subscriptions
-        sequence_ canceller
-        pure a
-    Lift m -> liftAff m
-    Par (HaloAp p) -> sequential $ retractFreeAp $ hoistFreeAp (parallel <<< evalHaloM hs) p
-    Fork fh k ->
-      liftEffect do
-        fid <- State.fresh ForkId hs
-        unlessM (Ref.read s.unmounted) do
-          doneRef <- Ref.new false
-          fiber <-
-            Aff.launchAff
-              $ finally
-                  ( liftEffect do
-                      Ref.modify_ (Map.delete fid) s.forks
-                      Ref.write true doneRef
-                  )
-                  (evalHaloM hs fh)
-          unlessM (Ref.read doneRef) do
-            Ref.modify_ (Map.insert fid fiber) s.forks
-        pure (k fid)
-    Kill fid a -> do
-      forks <- liftEffect (Ref.read s.forks)
-      traverse_ (Aff.killFiber (Aff.error "Cancelled")) (Map.lookup fid forks)
+evalHaloM hs@(HaloState s) (HaloM halo) = foldFree (evalHaloF hs) halo
+
+evalHaloF :: forall props state action. HaloState props state action -> HaloF props state action Aff ~> Aff
+evalHaloF hs@(HaloState s) = case _ of
+  Props k ->
+    liftEffect do
+      props <- Ref.read s.props
+      pure (k props)
+  State f ->
+    liftEffect do
+      state <- Ref.read s.state
+      case f state of
+        Tuple a state'
+          | unsafeRefEq state state' -> do
+            Ref.write state' s.state
+            s.render state'
+            pure a
+          | otherwise -> pure a
+  Subscribe sub k ->
+    liftEffect do
+      sid <- State.fresh SubscriptionId hs
+      unlessM (Ref.read s.unmounted) do
+        canceller <- Event.subscribe (sub sid) (handleAction hs)
+        Ref.modify_ (Map.insert sid canceller) s.subscriptions
+      pure (k sid)
+  Unsubscribe sid a ->
+    liftEffect do
+      canceller <- Map.lookup sid <$> Ref.read s.subscriptions
+      sequence_ canceller
       pure a
+  Lift m -> liftAff m
+  Par (HaloAp p) -> sequential $ retractFreeAp $ hoistFreeAp (parallel <<< evalHaloM hs) p
+  Fork fh k ->
+    liftEffect do
+      fid <- State.fresh ForkId hs
+      unlessM (Ref.read s.unmounted) do
+        doneRef <- Ref.new false
+        fiber <-
+          Aff.launchAff
+            $ finally
+                ( liftEffect do
+                    Ref.modify_ (Map.delete fid) s.forks
+                    Ref.write true doneRef
+                )
+                (evalHaloM hs fh)
+        unlessM (Ref.read doneRef) do
+          Ref.modify_ (Map.insert fid fiber) s.forks
+      pure (k fid)
+  Kill fid a -> do
+    forks <- liftEffect (Ref.read s.forks)
+    traverse_ (Aff.killFiber (Aff.error "Cancelled")) (Map.lookup fid forks)
+    pure a
 
 type Spec props action state m
   = { initialize :: props -> Maybe action
