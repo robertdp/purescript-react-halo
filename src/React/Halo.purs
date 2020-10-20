@@ -13,7 +13,7 @@ import React.Basic.Hooks (JSX)
 import React.Basic.Hooks as React
 import React.Halo.Component (Spec)
 import React.Halo.Component (Lifecycle(..), Spec) as Exports
-import React.Halo.Component.Control (ForkId, HaloAp, HaloM, SubscriptionId, fork, hoist, kill, props, subscribe, subscribe_, unsubscribe) as Exports
+import React.Halo.Component.Control (ForkId, HaloAp, HaloM, SubscriptionId, fork, hoist, kill, props, subscribe, subscribe', unsubscribe) as Exports
 import React.Halo.Component.State (createInitialState)
 import React.Halo.Eval (handleAction, handleUpdate, runFinalize, runInitialize)
 import React.Halo.Eval (EvalSpec, defaultEval, makeEval) as Exports

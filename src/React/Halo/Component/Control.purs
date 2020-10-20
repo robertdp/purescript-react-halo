@@ -100,11 +100,11 @@ hoist nat (HaloM component) = HaloM (hoistFree go component)
 props :: forall props m action state. HaloM props state action m props
 props = HaloM (liftF (Props identity))
 
-subscribe :: forall m action state props. (SubscriptionId -> Event action) -> HaloM props state action m SubscriptionId
-subscribe event = HaloM (liftF (Subscribe event identity))
+subscribe' :: forall m action state props. (SubscriptionId -> Event action) -> HaloM props state action m SubscriptionId
+subscribe' event = HaloM (liftF (Subscribe event identity))
 
-subscribe_ :: forall props state action m. Event action -> HaloM props state action m SubscriptionId
-subscribe_ = subscribe <<< const
+subscribe :: forall props state action m. Event action -> HaloM props state action m SubscriptionId
+subscribe = subscribe' <<< const
 
 unsubscribe :: forall m action state props. SubscriptionId -> HaloM props state action m Unit
 unsubscribe sid = HaloM (liftF (Unsubscribe sid unit))
