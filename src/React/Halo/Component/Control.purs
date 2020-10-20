@@ -30,7 +30,7 @@ instance functorHaloF :: Functor m => Functor (HaloF props state action m) where
     Unsubscribe sid a -> Unsubscribe sid (f a)
     Lift m -> Lift (map f m)
     Par par -> Par (map f par)
-    Fork fork k -> Fork fork (map f k)
+    Fork m k -> Fork m (map f k)
     Kill fid a -> Kill fid (f a)
 
 newtype HaloM props state action m a
@@ -94,5 +94,23 @@ hoist nat (HaloM component) = HaloM (hoistFree go component)
     Unsubscribe sid a -> Unsubscribe sid a
     Lift m -> Lift (nat m)
     Par par -> Par (over HaloAp (hoistFreeAp (hoist nat)) par)
-    Fork fork k -> Fork (hoist nat fork) k
+    Fork m k -> Fork (hoist nat m) k
     Kill fid a -> Kill fid a
+
+props :: forall props m action state. HaloM props state action m props
+props = HaloM (liftF (Props identity))
+
+subscribe :: forall m action state props. (SubscriptionId -> Event action) -> HaloM props state action m SubscriptionId
+subscribe event = HaloM (liftF (Subscribe event identity))
+
+subscribe_ :: forall props state action m. Event action -> HaloM props state action m SubscriptionId
+subscribe_ = subscribe <<< const
+
+unsubscribe :: forall m action state props. SubscriptionId -> HaloM props state action m Unit
+unsubscribe sid = HaloM (liftF (Unsubscribe sid unit))
+
+fork :: forall m action state props. HaloM props state action m Unit -> HaloM props state action m ForkId
+fork m = HaloM (liftF (Fork m identity))
+
+kill :: forall m action state props. ForkId -> HaloM props state action m Unit
+kill fid = HaloM (liftF (Kill fid unit))
