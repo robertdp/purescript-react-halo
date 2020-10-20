@@ -2,9 +2,13 @@ module React.Halo.Component.Control where
 
 import Prelude
 import Control.Applicative.Free (FreeAp, hoistFreeAp)
+import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Control.Monad.Free (Free, hoistFree, liftF)
+import Control.Monad.Reader (class MonadAsk, ask)
+import Control.Monad.Rec.Class (class MonadRec, Step(..), tailRecM)
 import Control.Monad.State (class MonadState)
 import Control.Monad.Trans.Class (class MonadTrans, lift)
+import Control.Monad.Writer (class MonadTell, tell)
 import Data.Bifunctor (lmap)
 import Data.Newtype (class Newtype, over)
 import Data.Tuple (Tuple)
@@ -61,6 +65,22 @@ instance monadAffHaloM :: MonadAff m => MonadAff (HaloM props state action m) wh
 
 instance monadStateHaloM :: MonadState state (HaloM props state action m) where
   state = HaloM <<< liftF <<< State
+
+instance monadRecHaloM :: MonadRec (HaloM props state action m) where
+  tailRecM k a =
+    k a
+      >>= case _ of
+          Loop x -> tailRecM k x
+          Done y -> pure y
+
+instance monadAskHaloM :: MonadAsk r m => MonadAsk r (HaloM props state action m) where
+  ask = HaloM $ liftF $ Lift ask
+
+instance monadTellHaloM :: MonadTell w m => MonadTell w (HaloM props state action m) where
+  tell = HaloM <<< liftF <<< Lift <<< tell
+
+instance monadThrowHaloM :: MonadThrow e m => MonadThrow e (HaloM props state action m) where
+  throwError = HaloM <<< liftF <<< Lift <<< throwError
 
 newtype HaloAp props state action m a
   = HaloAp (FreeAp (HaloM props state action m) a)

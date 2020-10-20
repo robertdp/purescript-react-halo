@@ -5,22 +5,25 @@ module React.Halo
   ) where
 
 import Prelude
+import Control.Monad.Error.Class (throwError) as Exports
+import Control.Monad.Reader (ask, asks) as Exports
 import Control.Monad.State.Class (get, gets, modify, modify_, put, state) as Exports
 import Control.Monad.Trans.Class (lift) as Exports
+import Control.Monad.Writer (tell) as Exports
 import Data.Tuple.Nested ((/\))
 import Effect (Effect)
-import Effect.Class (liftEffect) as Exports
 import Effect.Aff (Aff)
 import Effect.Aff.Class (liftAff) as Exports
+import Effect.Class (liftEffect) as Exports
 import Effect.Unsafe (unsafePerformEffect)
 import React.Basic.Hooks (JSX)
 import React.Basic.Hooks as React
-import React.Halo.Component (Spec)
 import React.Halo.Component (Lifecycle(..), Spec) as Exports
+import React.Halo.Component (Spec)
 import React.Halo.Component.Control (ForkId, HaloAp, HaloM, SubscriptionId, fork, hoist, kill, props, subscribe, subscribe', unsubscribe) as Exports
 import React.Halo.Component.State (createInitialState)
-import React.Halo.Eval (handleAction, handleUpdate, runFinalize, runInitialize)
 import React.Halo.Eval (EvalSpec, defaultEval, makeEval) as Exports
+import React.Halo.Eval (handleAction, handleUpdate, runFinalize, runInitialize)
 
 component :: forall state action props. String -> Spec props state action Aff -> Effect (props -> JSX)
 component name spec@{ init, render } =
