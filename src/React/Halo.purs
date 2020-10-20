@@ -8,8 +8,8 @@ import Effect.Unsafe (unsafePerformEffect)
 import React.Basic.Hooks (JSX)
 import React.Basic.Hooks as React
 import React.Halo.Component (Spec)
-import React.Halo.Component.State as State
-import React.Halo.Eval as Eval
+import React.Halo.Component.State (createInitialState)
+import React.Halo.Eval (handleAction, handleUpdate, runFinalize, runInitialize)
 
 component ::
   forall state action props.
@@ -22,12 +22,12 @@ component name spec@{ init, render } =
     halo <-
       React.useMemo unit \_ ->
         unsafePerformEffect do
-          State.createInitialState spec setState props
+          createInitialState spec setState props
     React.useEffectOnce do
-      Eval.runInitialize halo props
+      runInitialize halo props
       pure do
-        Eval.runFinalize halo
+        runFinalize halo
     React.useEffectAlways do
-      Eval.handleUpdate halo props
+      handleUpdate halo props
       mempty
-    pure (render { props, state, send: Eval.handleAction halo })
+    pure (render { props, state, send: handleAction halo })
