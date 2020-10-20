@@ -46,6 +46,10 @@ derive newtype instance bindHaloM :: Bind (HaloM props state action m)
 
 derive newtype instance monadHaloM :: Monad (HaloM props state action m)
 
+derive newtype instance semigroupHaloM :: Semigroup a => Semigroup (HaloM props state action m a)
+
+derive newtype instance monoidHaloM :: Monoid a => Monoid (HaloM props state action m a)
+
 instance monadTransHaloM :: MonadTrans (HaloM props state action) where
   lift = HaloM <<< liftF <<< Lift
 
