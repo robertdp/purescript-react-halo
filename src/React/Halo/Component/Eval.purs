@@ -35,7 +35,7 @@ evalHaloF hs@(HaloState s) = case _ of
       state <- Ref.read s.state
       case f state of
         Tuple a state'
-          | unsafeRefEq state state' -> do
+          | not unsafeRefEq state state' -> do
             Ref.write state' s.state
             s.render state'
             pure a
