@@ -1,0 +1,17 @@
+{
+  "name": "purescript-react-halo",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "spago build"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "purescript": "^0.13.8",
+    "purescript-psa": "^0.8.0",
+    "purty": "^6.2.0",
+    "spago": "^0.16.0"
+  }
+}
