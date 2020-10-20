@@ -75,14 +75,14 @@ evalHaloF hs@(HaloState s) = case _ of
     traverse_ (Aff.killFiber (Aff.error "Cancelled")) (Map.lookup fid forks)
     pure a
 
-type Spec props action state m
+type Eval props action state m
   = { initialize :: props -> Maybe action
     , onProps :: props -> props -> Maybe action
     , onAction :: action -> HaloM props state action m Unit
     , finalize :: Maybe action
     }
 
-defaultEval :: forall props action state m. Spec props action state m
+defaultEval :: forall props action state m. Eval props action state m
 defaultEval =
   { initialize: \_ -> Nothing
   , onProps: \_ _ -> Nothing
@@ -90,7 +90,7 @@ defaultEval =
   , finalize: Nothing
   }
 
-makeEval :: forall props action state m. Spec props action state m -> Lifecycle props action -> HaloM props state action m Unit
+makeEval :: forall props action state m. Eval props action state m -> Lifecycle props action -> HaloM props state action m Unit
 makeEval eval = case _ of
   Initialize props -> traverse_ eval.onAction $ eval.initialize props
   Update old new -> traverse_ eval.onAction $ eval.onProps old new
