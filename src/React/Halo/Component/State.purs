@@ -27,7 +27,7 @@ createInitialState component render props' = do
   unmounted <- Ref.new false
   fresh' <- Ref.new 0
   props <- Ref.new props'
-  state <- Ref.new component.init
+  state <- Ref.new component.initialState
   subscriptions <- Ref.new Map.empty
   forks <- Ref.new Map.empty
   pure $ HaloState { component, render, unmounted, props, state, fresh: fresh', subscriptions, forks }

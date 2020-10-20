@@ -26,9 +26,9 @@ import React.Halo.Eval (EvalSpec, defaultEval, makeEval) as Exports
 import React.Halo.Eval (handleAction, handleUpdate, runFinalize, runInitialize)
 
 component :: forall state action props. String -> Spec props state action Aff -> Effect (props -> JSX)
-component name spec@{ init, render } =
+component name spec@{ initialState, render } =
   React.component name \props -> React.do
-    state /\ setState <- React.useState' init
+    state /\ setState <- React.useState' initialState
     halo <- React.useMemo unit \_ -> unsafePerformEffect (createInitialState spec setState props)
     React.useEffectOnce (runInitialize halo props *> pure (runFinalize halo))
     React.useEffectAlways (handleUpdate halo props *> mempty)

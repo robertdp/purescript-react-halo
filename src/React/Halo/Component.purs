@@ -12,7 +12,7 @@ data Lifecycle props action
   | Finalize
 
 type Spec props state action m
-  = { init :: state
+  = { initialState :: state
     , eval :: Lifecycle props action -> HaloM props state action m Unit
     , render ::
         { props :: props
