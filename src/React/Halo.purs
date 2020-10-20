@@ -31,3 +31,10 @@ component name spec@{ init, render } =
       handleUpdate halo props
       mempty
     pure (render { props, state, send: handleAction halo })
+
+component_ ::
+  forall state action.
+  String ->
+  Spec Unit state action Aff ->
+  Effect JSX
+component_ name spec = flap (component name spec) unit

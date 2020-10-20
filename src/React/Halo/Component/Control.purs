@@ -22,9 +22,6 @@ data HaloF props state action m a
   | Fork (HaloM props state action m Unit) (ForkId -> a)
   | Kill ForkId a
 
-newtype HaloM props state action m a
-  = HaloM (Free (HaloF props state action m) a)
-
 instance functorHaloF :: Functor m => Functor (HaloF props state action m) where
   map f = case _ of
     Props k -> Props (f <<< k)
@@ -35,6 +32,9 @@ instance functorHaloF :: Functor m => Functor (HaloF props state action m) where
     Par par -> Par (map f par)
     Fork fork k -> Fork fork (map f k)
     Kill fid a -> Kill fid (f a)
+
+newtype HaloM props state action m a
+  = HaloM (Free (HaloF props state action m) a)
 
 derive newtype instance functorHaloM :: Functor (HaloM props state action m)
 
