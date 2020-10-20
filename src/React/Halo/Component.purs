@@ -17,7 +17,7 @@ type Spec props state action m
     , render ::
         { props :: props
         , state :: state
-        , dispatch :: action -> Effect Unit
+        , send :: action -> Effect Unit
         } ->
         JSX
     }

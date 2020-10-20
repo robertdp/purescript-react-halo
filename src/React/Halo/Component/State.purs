@@ -10,8 +10,8 @@ import Effect.Ref as Ref
 import React.Halo.Component (Spec)
 import React.Halo.Component.Control (ForkId, SubscriptionId)
 
-newtype State props state action
-  = State
+newtype HaloState props state action
+  = HaloState
   { component :: Spec props state action Aff
   , render :: state -> Effect Unit
   , unmounted :: Ref Boolean
@@ -22,16 +22,16 @@ newtype State props state action
   , forks :: Ref (Map ForkId (Fiber Unit))
   }
 
-createInitialState :: forall props state action. Spec props state action Aff -> (state -> Effect Unit) -> props -> state -> Effect (State props state action)
-createInitialState component render props' state' = do
+createInitialState :: forall props state action. Spec props state action Aff -> (state -> Effect Unit) -> props -> Effect (HaloState props state action)
+createInitialState component render props' = do
   unmounted <- Ref.new false
   fresh' <- Ref.new 0
   props <- Ref.new props'
-  state <- Ref.new state'
+  state <- Ref.new component.init
   subscriptions <- Ref.new Map.empty
   forks <- Ref.new Map.empty
-  pure $ State { component, render, unmounted, props, state, fresh: fresh', subscriptions, forks }
+  pure $ HaloState { component, render, unmounted, props, state, fresh: fresh', subscriptions, forks }
 
-fresh :: forall props state action a. (Int -> a) -> State props state action -> Effect a
-fresh f (State state) = do
+fresh :: forall props state action a. (Int -> a) -> HaloState props state action -> Effect a
+fresh f (HaloState state) = do
   Ref.modify' (\a -> { state: a + 1, value: f a }) state.fresh
