@@ -33,5 +33,4 @@ createInitialState component render props' = do
   pure $ HaloState { component, render, unmounted, props, state, fresh: fresh', subscriptions, forks }
 
 fresh :: forall props state action a. (Int -> a) -> HaloState props state action -> Effect a
-fresh f (HaloState state) = do
-  Ref.modify' (\a -> { state: a + 1, value: f a }) state.fresh
+fresh f (HaloState s) = Ref.modify' (\a -> { state: a + 1, value: f a }) s.fresh
