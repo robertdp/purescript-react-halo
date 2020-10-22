@@ -11,7 +11,7 @@ data Lifecycle props action
   | Action action
   | Finalize
 
-type Spec props state action m
+type ComponentSpec props state action m
   = { initialState :: state
     , eval :: Lifecycle props action -> HaloM props state action m Unit
     , render ::
@@ -20,4 +20,10 @@ type Spec props state action m
         , send :: action -> Effect Unit
         } ->
         JSX
+    }
+
+type HookSpec props state action m
+  = { props :: props
+    , initialState :: state
+    , eval :: Lifecycle props action -> HaloM props state action m Unit
     }

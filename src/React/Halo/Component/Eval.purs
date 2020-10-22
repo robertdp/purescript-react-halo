@@ -103,25 +103,25 @@ runAff = Aff.runAff_ (either throwError pure)
 runInitialize :: forall props state action. HaloState props action state -> props -> Effect Unit
 runInitialize hs@(HaloState s) props = do
   Ref.write props s.props
-  runAff $ evalHaloM hs $ s.component.eval $ Initialize props
+  runAff $ evalHaloM hs $ s.eval $ Initialize props
 
 handleUpdate :: forall props state action. HaloState props action state -> props -> Effect Unit
 handleUpdate hs@(HaloState s) props = do
   props' <- Ref.read s.props
   unless (unsafeRefEq props props') do
     Ref.write props s.props
-    runAff $ evalHaloM hs $ s.component.eval $ Update props' props
+    runAff $ evalHaloM hs $ s.eval $ Update props' props
 
 handleAction :: forall props state action. HaloState props state action -> action -> Effect Unit
 handleAction hs@(HaloState s) action = do
   unlessM (Ref.read s.unmounted) do
-    runAff $ evalHaloM hs $ s.component.eval $ Action action
+    runAff $ evalHaloM hs $ s.eval $ Action action
 
 runFinalize :: forall props state action. HaloState props state action -> Effect Unit
-runFinalize hs@(HaloState state) = do
-  Ref.write true state.unmounted
-  runAff $ evalHaloM hs $ state.component.eval Finalize
-  subscriptions <- Ref.modify' (\s -> { state: Map.empty, value: s }) state.subscriptions
+runFinalize hs@(HaloState s) = do
+  Ref.write true s.unmounted
+  runAff $ evalHaloM hs $ s.eval Finalize
+  subscriptions <- Ref.modify' (\s' -> { state: Map.empty, value: s' }) s.subscriptions
   sequence_ (Map.values subscriptions)
-  forks <- Ref.modify' (\s -> { state: Map.empty, value: s }) state.forks
+  forks <- Ref.modify' (\s' -> { state: Map.empty, value: s' }) s.forks
   traverse_ (runAff <<< Aff.killFiber (Aff.error "Cancelled")) (Map.values forks)
