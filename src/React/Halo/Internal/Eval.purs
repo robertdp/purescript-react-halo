@@ -57,18 +57,17 @@ evalHaloF hs@(HaloState s) = case _ of
   Fork fh k ->
     liftEffect do
       fid <- State.fresh ForkId hs
-      unlessM (Ref.read s.unmounted) do
-        doneRef <- Ref.new false
-        fiber <-
-          Aff.launchAff
-            $ finally
-                ( liftEffect do
-                    Ref.modify_ (Map.delete fid) s.forks
-                    Ref.write true doneRef
-                )
-                (evalHaloM hs fh)
-        unlessM (Ref.read doneRef) do
-          Ref.modify_ (Map.insert fid fiber) s.forks
+      doneRef <- Ref.new false
+      fiber <-
+        Aff.launchAff
+          $ finally
+              ( liftEffect do
+                  Ref.modify_ (Map.delete fid) s.forks
+                  Ref.write true doneRef
+              )
+              (evalHaloM hs fh)
+      unlessM (Ref.read doneRef) do
+        Ref.modify_ (Map.insert fid fiber) s.forks
       pure (k fid)
   Kill fid a -> do
     forks <- liftEffect (Ref.read s.forks)

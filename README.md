@@ -13,7 +13,7 @@ let additions =
   { react-halo =
     { dependencies = [ "aff", "free", "freeap", "react-basic-hooks", "wire" ]
     , repo = "https://github.com/robertdp/purescript-react-halo.git"
-    , version = "v0.2.0"
+    , version = "v0.2.1"
     }
   , wire =
     { dependencies = [ "aff", "filterable", "refs", "unsafe-reference" ]
@@ -111,5 +111,4 @@ fork :: forall m action state props. HaloM props state action m Unit -> HaloM pr
 kill :: forall m action state props. ForkId -> HaloM props state action m Unit
 ```
 
-Similarly to subscriptions, when the component unmounts all still-running forks will be killed, and new forks cannot be created once the `Finalize` event has been fired.
-
+Similarly to subscriptions, when the component unmounts all still-running forks will be killed. However new forks _can_ be created during the `Finalize` phase but there is no way of killing them (as with Halogen).
