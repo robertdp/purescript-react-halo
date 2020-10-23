@@ -99,7 +99,7 @@ There is also a version for subscriptions that want to unsubscribe themselves:
 subscribe' :: forall m action state props. (SubscriptionId -> Event action) -> HaloM props state action m SubscriptionId
 ```
 
-Any subscriptions that remain when the component is unmounted are automatically unsubscribed. This prevents requiring manual clean up in the `Finalize` lifecycle event.
+Any subscriptions that remain when the component is unmounted are automatically unsubscribed. This prevents requiring manual clean up in the `Finalize` lifecycle event. Also note that new subscriptions will not be created once the `Finalize` event has been fired.
 
 ## Parallelism
 
@@ -111,5 +111,5 @@ fork :: forall m action state props. HaloM props state action m Unit -> HaloM pr
 kill :: forall m action state props. ForkId -> HaloM props state action m Unit
 ```
 
-Similarly to subscriptions, when the component unmounts all still-running forks will be killed.
+Similarly to subscriptions, when the component unmounts all still-running forks will be killed, and new forks cannot be created once the `Finalize` event has been fired.
 
