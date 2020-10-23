@@ -2,6 +2,8 @@ module React.Halo
   ( module Exports
   , component
   , component_
+  , UseHalo
+  , useHalo
   ) where
 
 import Prelude
@@ -48,6 +50,11 @@ useHalo { props, initialState, eval } =
   React.coerceHook React.do
     state /\ setState <- React.useState' initialState
     halo <- React.useMemo unit \_ -> unsafePerformEffect (createInitialState initialState eval setState props)
-    React.useEffectOnce (runInitialize halo props *> pure (runFinalize halo))
-    React.useEffectAlways (handleUpdate halo props *> mempty)
+    React.useEffectOnce do
+      runInitialize halo props
+      pure do
+        runFinalize halo
+    React.useEffectAlways do
+      handleUpdate halo props
+      mempty
     pure (state /\ handleAction halo)
