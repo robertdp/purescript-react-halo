@@ -1,4 +1,4 @@
-module React.Halo.Eval where
+module React.Halo.Component.Eval where
 
 import Prelude
 import Control.Applicative.Free (hoistFreeAp, retractFreeAp)

@@ -24,9 +24,9 @@ import React.Basic.Hooks as React
 import React.Halo.Component (ComponentSpec, HookSpec)
 import React.Halo.Component (Lifecycle(..), ComponentSpec, HookSpec) as Exports
 import React.Halo.Component.Control (ForkId, HaloAp, HaloM, SubscriptionId, fork, hoist, kill, props, subscribe, subscribe', unsubscribe) as Exports
+import React.Halo.Component.Eval (EvalSpec, defaultEval, makeEval) as Exports
+import React.Halo.Component.Eval (handleAction, handleUpdate, runFinalize, runInitialize)
 import React.Halo.Component.State (HaloState, createInitialState)
-import React.Halo.Eval (EvalSpec, defaultEval, makeEval) as Exports
-import React.Halo.Eval (handleAction, handleUpdate, runFinalize, runInitialize)
 
 component :: forall state action props. String -> ComponentSpec props state action Aff -> Effect (props -> JSX)
 component name { initialState, eval, render } =

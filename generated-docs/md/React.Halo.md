@@ -264,7 +264,7 @@ hoist :: forall props state action m m'. Functor m => (m ~> m') -> (HaloM props 
 fork :: forall m action state props. HaloM props state action m Unit -> HaloM props state action m ForkId
 ```
 
-### Re-exported from React.Halo.Eval:
+### Re-exported from React.Halo.Component.Eval:
 
 #### `EvalSpec`
 
