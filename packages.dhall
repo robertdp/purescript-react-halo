@@ -132,7 +132,7 @@ let additions =
       , "unsafe-reference"
       ]
     , repo = "https://github.com/robertdp/purescript-wire.git"
-    , version = "v0.4.2"
+    , version = "v0.5.0"
     }
   }
 

@@ -1,0 +1,23 @@
+{
+    "name": "purescript-react-halo",
+    "license": [
+        "BSD-3-Clause"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/robertdp/purescript-react-halo.git"
+    },
+    "ignore": [
+        "**/.*",
+        "node_modules",
+        "bower_components",
+        "output"
+    ],
+    "dependencies": {
+        "purescript-aff": "^v5.1.2",
+        "purescript-free": "^v5.2.0",
+        "purescript-freeap": "^v5.0.1",
+        "purescript-react-basic-hooks": "^v6.2.0",
+        "purescript-wire": "robertdp/purescript-wire#v0.5.0"
+    }
+}
