@@ -1,4 +1,4 @@
-module React.Halo.Component.Control where
+module React.Halo.Internal.Control where
 
 import Prelude
 import Control.Applicative.Free (FreeAp, hoistFreeAp, liftFreeAp, retractFreeAp)
@@ -15,6 +15,7 @@ import Data.Newtype (class Newtype, over, unwrap, wrap)
 import Data.Tuple (Tuple)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
+import React.Halo.Internal.Types (ForkId, SubscriptionId)
 import Wire.Event (Event)
 
 data HaloF props state action m a
@@ -97,20 +98,6 @@ derive newtype instance applicativeHaloAp :: Applicative (HaloAp props state act
 instance parallelHaloM :: Parallel (HaloAp props state action m) (HaloM props state action m) where
   parallel = wrap <<< liftFreeAp
   sequential = unwrap >>> retractFreeAp
-
-newtype SubscriptionId
-  = SubscriptionId Int
-
-derive newtype instance eqSubscriptionId :: Eq SubscriptionId
-
-derive newtype instance ordSubscriptionId :: Ord SubscriptionId
-
-newtype ForkId
-  = ForkId Int
-
-derive newtype instance eqForkId :: Eq ForkId
-
-derive newtype instance ordForkId :: Ord ForkId
 
 hoist :: forall props state action m m'. Functor m => (m ~> m') -> HaloM props state action m ~> HaloM props state action m'
 hoist nat (HaloM component) = HaloM (hoistFree go component)

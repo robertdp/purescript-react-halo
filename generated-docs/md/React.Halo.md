@@ -1,15 +1,9 @@
 ## Module React.Halo
 
-#### `component`
+#### `HookSpec`
 
 ``` purescript
-component :: forall state action props. String -> ComponentSpec props state action Aff -> Effect (props -> JSX)
-```
-
-#### `component_`
-
-``` purescript
-component_ :: forall state action. String -> ComponentSpec Unit state action Aff -> Effect JSX
+type HookSpec props state action m = { eval :: Lifecycle props action -> HaloM props state action m Unit, initialState :: state, props :: props }
 ```
 
 #### `UseHalo`
@@ -27,6 +21,24 @@ Newtype (UseHalo props state action hooks) _
 
 ``` purescript
 useHalo :: forall state action props. HookSpec props state action Aff -> Hook (UseHalo props state action) (state /\ (action -> Effect Unit))
+```
+
+#### `ComponentSpec`
+
+``` purescript
+type ComponentSpec props state action m = { eval :: Lifecycle props action -> HaloM props state action m Unit, initialState :: state, render :: { props :: props, send :: action -> Effect Unit, state :: state } -> JSX }
+```
+
+#### `component`
+
+``` purescript
+component :: forall state action props. String -> ComponentSpec props state action Aff -> Effect (props -> JSX)
+```
+
+#### `component_`
+
+``` purescript
+component_ :: forall state action. String -> ComponentSpec Unit state action Aff -> Effect JSX
 ```
 
 
@@ -133,43 +145,7 @@ liftAff :: forall m. MonadAff m => Aff ~> m
 liftEffect :: forall a m. MonadEffect m => Effect a -> m a
 ```
 
-### Re-exported from React.Halo.Component:
-
-#### `Lifecycle`
-
-``` purescript
-data Lifecycle props action
-  = Initialize props
-  | Update props props
-  | Action action
-  | Finalize
-```
-
-#### `HookSpec`
-
-``` purescript
-type HookSpec props state action m = { eval :: Lifecycle props action -> HaloM props state action m Unit, initialState :: state, props :: props }
-```
-
-#### `ComponentSpec`
-
-``` purescript
-type ComponentSpec props state action m = { eval :: Lifecycle props action -> HaloM props state action m Unit, initialState :: state, render :: { props :: props, send :: action -> Effect Unit, state :: state } -> JSX }
-```
-
-### Re-exported from React.Halo.Component.Control:
-
-#### `SubscriptionId`
-
-``` purescript
-newtype SubscriptionId
-```
-
-##### Instances
-``` purescript
-Eq SubscriptionId
-Ord SubscriptionId
-```
+### Re-exported from React.Halo.Internal.Control:
 
 #### `HaloM`
 
@@ -194,6 +170,7 @@ MonadRec (HaloM props state action m)
 (MonadAsk r m) => MonadAsk r (HaloM props state action m)
 (MonadTell w m) => MonadTell w (HaloM props state action m)
 (MonadThrow e m) => MonadThrow e (HaloM props state action m)
+Parallel (HaloAp props state action m) (HaloM props state action m)
 ```
 
 #### `HaloAp`
@@ -208,18 +185,7 @@ Newtype (HaloAp props state action m a) _
 Functor (HaloAp props state action m)
 Apply (HaloAp props state action m)
 Applicative (HaloAp props state action m)
-```
-
-#### `ForkId`
-
-``` purescript
-newtype ForkId
-```
-
-##### Instances
-``` purescript
-Eq ForkId
-Ord ForkId
+Parallel (HaloAp props state action m) (HaloM props state action m)
 ```
 
 #### `unsubscribe`
@@ -264,7 +230,7 @@ hoist :: forall props state action m m'. Functor m => (m ~> m') -> (HaloM props 
 fork :: forall m action state props. HaloM props state action m Unit -> HaloM props state action m ForkId
 ```
 
-### Re-exported from React.Halo.Component.Eval:
+### Re-exported from React.Halo.Internal.Eval:
 
 #### `EvalSpec`
 
@@ -282,5 +248,41 @@ makeEval :: forall props action state m. EvalSpec props action state m -> Lifecy
 
 ``` purescript
 defaultEval :: forall props action state m. EvalSpec props action state m
+```
+
+### Re-exported from React.Halo.Internal.Types:
+
+#### `SubscriptionId`
+
+``` purescript
+newtype SubscriptionId
+```
+
+##### Instances
+``` purescript
+Eq SubscriptionId
+Ord SubscriptionId
+```
+
+#### `Lifecycle`
+
+``` purescript
+data Lifecycle props action
+  = Initialize props
+  | Update props props
+  | Action action
+  | Finalize
+```
+
+#### `ForkId`
+
+``` purescript
+newtype ForkId
+```
+
+##### Instances
+``` purescript
+Eq ForkId
+Ord ForkId
 ```
 

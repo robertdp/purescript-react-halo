@@ -13,7 +13,7 @@ let additions =
   { react-halo =
     { dependencies = [ "aff", "free", "freeap", "react-basic-hooks", "wire" ]
     , repo = "https://github.com/robertdp/purescript-react-halo.git"
-    , version = "v0.1.2"
+    , version = "v0.2.0"
     }
   , wire =
     { dependencies = [ "aff", "filterable", "refs", "unsafe-reference" ]

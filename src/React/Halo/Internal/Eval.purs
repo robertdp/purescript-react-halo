@@ -1,4 +1,4 @@
-module React.Halo.Component.Eval where
+module React.Halo.Internal.Eval where
 
 import Prelude
 import Control.Applicative.Free (hoistFreeAp, retractFreeAp)
@@ -14,10 +14,10 @@ import Effect.Aff as Aff
 import Effect.Aff.Class (liftAff)
 import Effect.Class (liftEffect)
 import Effect.Ref as Ref
-import React.Halo.Component (Lifecycle(..))
-import React.Halo.Component.Control (ForkId(..), HaloAp(..), HaloF(..), HaloM(..), SubscriptionId(..))
-import React.Halo.Component.State (HaloState(..))
-import React.Halo.Component.State as State
+import React.Halo.Internal.Control (HaloAp(..), HaloF(..), HaloM(..))
+import React.Halo.Internal.State (HaloState(..))
+import React.Halo.Internal.State as State
+import React.Halo.Internal.Types (ForkId(..), Lifecycle(..), SubscriptionId(..))
 import Unsafe.Reference (unsafeRefEq)
 import Wire.Event as Event
 

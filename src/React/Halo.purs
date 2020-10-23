@@ -1,9 +1,11 @@
 module React.Halo
   ( module Exports
-  , component
-  , component_
+  , HookSpec
   , UseHalo
   , useHalo
+  , ComponentSpec
+  , component
+  , component_
   ) where
 
 import Prelude
@@ -21,21 +23,19 @@ import Effect.Class (liftEffect) as Exports
 import Effect.Unsafe (unsafePerformEffect)
 import React.Basic.Hooks (JSX, UseEffect, UseMemo, UseState, Hook)
 import React.Basic.Hooks as React
-import React.Halo.Component (ComponentSpec, HookSpec)
-import React.Halo.Component (Lifecycle(..), ComponentSpec, HookSpec) as Exports
-import React.Halo.Component.Control (ForkId, HaloAp, HaloM, SubscriptionId, fork, hoist, kill, props, subscribe, subscribe', unsubscribe) as Exports
-import React.Halo.Component.Eval (EvalSpec, defaultEval, makeEval) as Exports
-import React.Halo.Component.Eval (handleAction, handleUpdate, runFinalize, runInitialize)
-import React.Halo.Component.State (HaloState, createInitialState)
+import React.Halo.Internal.Control (HaloAp, HaloM, fork, hoist, kill, props, subscribe, subscribe', unsubscribe) as Exports
+import React.Halo.Internal.Control (HaloM)
+import React.Halo.Internal.Eval (EvalSpec, defaultEval, makeEval) as Exports
+import React.Halo.Internal.Eval (handleAction, handleUpdate, runFinalize, runInitialize)
+import React.Halo.Internal.State (HaloState, createInitialState)
+import React.Halo.Internal.Types (Lifecycle)
+import React.Halo.Internal.Types (ForkId, Lifecycle(..), SubscriptionId) as Exports
 
-component :: forall state action props. String -> ComponentSpec props state action Aff -> Effect (props -> JSX)
-component name { initialState, eval, render } =
-  React.component name \props -> React.do
-    state /\ send <- useHalo { props, initialState, eval }
-    pure (render { props, state, send })
-
-component_ :: forall state action. String -> ComponentSpec Unit state action Aff -> Effect JSX
-component_ name spec = flap (component name spec) unit
+type HookSpec props state action m
+  = { props :: props
+    , initialState :: state
+    , eval :: Lifecycle props action -> HaloM props state action m Unit
+    }
 
 newtype UseHalo props state action hooks
   = UseHalo (UseEffect Unit (UseEffect Unit (UseMemo Unit (HaloState props state action) (UseState state hooks))))
@@ -58,3 +58,23 @@ useHalo { props, initialState, eval } =
       handleUpdate halo props
       mempty
     pure (state /\ handleAction halo)
+
+type ComponentSpec props state action m
+  = { initialState :: state
+    , eval :: Lifecycle props action -> HaloM props state action m Unit
+    , render ::
+        { props :: props
+        , state :: state
+        , send :: action -> Effect Unit
+        } ->
+        JSX
+    }
+
+component :: forall state action props. String -> ComponentSpec props state action Aff -> Effect (props -> JSX)
+component name { initialState, eval, render } =
+  React.component name \props -> React.do
+    state /\ send <- useHalo { props, initialState, eval }
+    pure (render { props, state, send })
+
+component_ :: forall state action. String -> ComponentSpec Unit state action Aff -> Effect JSX
+component_ name spec = flap (component name spec) unit

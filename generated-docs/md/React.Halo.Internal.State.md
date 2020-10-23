@@ -1,4 +1,4 @@
-## Module React.Halo.Component.State
+## Module React.Halo.Internal.State
 
 #### `HaloState`
 

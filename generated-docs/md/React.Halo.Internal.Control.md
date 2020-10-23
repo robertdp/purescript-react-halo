@@ -1,4 +1,4 @@
-## Module React.Halo.Component.Control
+## Module React.Halo.Internal.Control
 
 #### `HaloF`
 
@@ -43,6 +43,7 @@ MonadRec (HaloM props state action m)
 (MonadAsk r m) => MonadAsk r (HaloM props state action m)
 (MonadTell w m) => MonadTell w (HaloM props state action m)
 (MonadThrow e m) => MonadThrow e (HaloM props state action m)
+Parallel (HaloAp props state action m) (HaloM props state action m)
 ```
 
 #### `HaloAp`
@@ -58,32 +59,7 @@ Newtype (HaloAp props state action m a) _
 Functor (HaloAp props state action m)
 Apply (HaloAp props state action m)
 Applicative (HaloAp props state action m)
-```
-
-#### `SubscriptionId`
-
-``` purescript
-newtype SubscriptionId
-  = SubscriptionId Int
-```
-
-##### Instances
-``` purescript
-Eq SubscriptionId
-Ord SubscriptionId
-```
-
-#### `ForkId`
-
-``` purescript
-newtype ForkId
-  = ForkId Int
-```
-
-##### Instances
-``` purescript
-Eq ForkId
-Ord ForkId
+Parallel (HaloAp props state action m) (HaloM props state action m)
 ```
 
 #### `hoist`

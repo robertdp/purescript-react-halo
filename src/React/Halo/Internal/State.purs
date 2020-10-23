@@ -1,4 +1,4 @@
-module React.Halo.Component.State where
+module React.Halo.Internal.State where
 
 import Prelude
 import Data.Map (Map)
@@ -7,8 +7,8 @@ import Effect (Effect)
 import Effect.Aff (Aff, Fiber)
 import Effect.Ref (Ref)
 import Effect.Ref as Ref
-import React.Halo.Component (Lifecycle)
-import React.Halo.Component.Control (ForkId, HaloM, SubscriptionId)
+import React.Halo.Internal.Control (HaloM)
+import React.Halo.Internal.Types (ForkId, Lifecycle, SubscriptionId)
 
 newtype HaloState props state action
   = HaloState
@@ -22,7 +22,11 @@ newtype HaloState props state action
   , forks :: Ref (Map ForkId (Fiber Unit))
   }
 
-createInitialState :: forall props state action. state -> (Lifecycle props action -> HaloM props state action Aff Unit) -> (state -> Effect Unit) -> props -> Effect (HaloState props state action)
+createInitialState ::
+  forall props state action.
+  state ->
+  (Lifecycle props action -> HaloM props state action Aff Unit) ->
+  (state -> Effect Unit) -> props -> Effect (HaloState props state action)
 createInitialState initialState eval render props' = do
   unmounted <- Ref.new false
   fresh' <- Ref.new 0

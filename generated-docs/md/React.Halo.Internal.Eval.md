@@ -1,4 +1,4 @@
-## Module React.Halo.Component.Eval
+## Module React.Halo.Internal.Eval
 
 #### `evalHaloM`
 
