@@ -5,7 +5,6 @@ You can edit this file as you like.
 { name = "react-halo"
 , dependencies =
   [ "aff"
-  , "avar"
   , "free"
   , "freeap"
   , "react-basic-hooks"
