@@ -1,7 +1,7 @@
 module React.Halo.Component.Control where
 
 import Prelude
-import Control.Applicative.Free (FreeAp, hoistFreeAp)
+import Control.Applicative.Free (FreeAp, hoistFreeAp, liftFreeAp, retractFreeAp)
 import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Control.Monad.Free (Free, hoistFree, liftF)
 import Control.Monad.Reader (class MonadAsk, ask)
@@ -9,8 +9,9 @@ import Control.Monad.Rec.Class (class MonadRec, Step(..), tailRecM)
 import Control.Monad.State (class MonadState)
 import Control.Monad.Trans.Class (class MonadTrans, lift)
 import Control.Monad.Writer (class MonadTell, tell)
+import Control.Parallel (class Parallel)
 import Data.Bifunctor (lmap)
-import Data.Newtype (class Newtype, over)
+import Data.Newtype (class Newtype, over, unwrap, wrap)
 import Data.Tuple (Tuple)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
@@ -92,6 +93,10 @@ derive newtype instance functorHaloAp :: Functor (HaloAp props state action m)
 derive newtype instance applyHaloAp :: Apply (HaloAp props state action m)
 
 derive newtype instance applicativeHaloAp :: Applicative (HaloAp props state action m)
+
+instance parallelHaloM :: Parallel (HaloAp props state action m) (HaloM props state action m) where
+  parallel = wrap <<< liftFreeAp
+  sequential = unwrap >>> retractFreeAp
 
 newtype SubscriptionId
   = SubscriptionId Int
