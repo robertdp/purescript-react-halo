@@ -13,12 +13,12 @@ let additions =
   { react-halo =
     { dependencies = [ "aff", "free", "freeap", "react-basic-hooks", "wire" ]
     , repo = "https://github.com/robertdp/purescript-react-halo.git"
-    , version = "v0.0.1"
+    , version = "v0.1.2"
     }
   , wire =
     { dependencies = [ "aff", "filterable", "refs", "unsafe-reference" ]
     , repo = "https://github.com/robertdp/purescript-wire.git"
-    , version = "v0.4.2"
+    , version = "v0.5.0"
     }
   }
 ```
