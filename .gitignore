@@ -5,7 +5,7 @@
 /generated-docs/*
 !/generated-docs/md
 /generated-docs/md/*
-!/generated-docs/md/React.Halo.md
+!/generated-docs/md/React.Halo.*
 /.psc-package/
 /.psc*
 /.purs*

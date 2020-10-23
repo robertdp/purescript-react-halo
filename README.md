@@ -27,6 +27,10 @@ Then install with Spago:
 
 `$ spago install react-halo`
 
+## Generated documentation
+
+See [here](https://github.com/robertdp/purescript-react-halo/blob/master/generated-docs/md/React.Halo.md)
+
 ## What does Halo provide?
 
 Whether you are using the hook or one of the component helpers, the main feature that Halo provides is the `eval` function. It looks like:
@@ -108,3 +112,4 @@ kill :: forall m action state props. ForkId -> HaloM props state action m Unit
 ```
 
 Similarly to subscriptions, when the component unmounts all still-running forks will be killed.
+
