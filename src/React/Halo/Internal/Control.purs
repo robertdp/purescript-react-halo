@@ -1,7 +1,7 @@
 module React.Halo.Internal.Control where
 
 import Prelude
-import Control.Applicative.Free (FreeAp, hoistFreeAp, liftFreeAp, retractFreeAp)
+import Control.Applicative.Free (FreeAp, hoistFreeAp, liftFreeAp)
 import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Control.Monad.Free (Free, hoistFree, liftF)
 import Control.Monad.Reader (class MonadAsk, ask)
@@ -11,7 +11,7 @@ import Control.Monad.Trans.Class (class MonadTrans, lift)
 import Control.Monad.Writer (class MonadTell, tell)
 import Control.Parallel (class Parallel)
 import Data.Bifunctor (lmap)
-import Data.Newtype (class Newtype, over, unwrap, wrap)
+import Data.Newtype (class Newtype, over)
 import Data.Tuple (Tuple)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
@@ -96,8 +96,8 @@ derive newtype instance applyHaloAp :: Apply (HaloAp props state action m)
 derive newtype instance applicativeHaloAp :: Applicative (HaloAp props state action m)
 
 instance parallelHaloM :: Parallel (HaloAp props state action m) (HaloM props state action m) where
-  parallel = wrap <<< liftFreeAp
-  sequential = unwrap >>> retractFreeAp
+  parallel = HaloAp <<< liftFreeAp
+  sequential = HaloM <<< liftF <<< Par
 
 hoist :: forall props state action m m'. Functor m => (m ~> m') -> HaloM props state action m ~> HaloM props state action m'
 hoist nat (HaloM component) = HaloM (hoistFree go component)
