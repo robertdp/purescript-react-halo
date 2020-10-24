@@ -14,6 +14,7 @@ import Control.Monad.Reader (ask, asks) as Exports
 import Control.Monad.State.Class (get, gets, modify, modify_, put, state) as Exports
 import Control.Monad.Trans.Class (lift) as Exports
 import Control.Monad.Writer (tell) as Exports
+import Control.Parallel.Class (parallel, sequential) as Exports
 import Data.Newtype (class Newtype)
 import Data.Tuple.Nested (type (/\), (/\))
 import Effect (Effect)
