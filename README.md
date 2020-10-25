@@ -1,8 +1,8 @@
 # React Halo
 
-Halo is a [Halogen](https://github.com/purescript-halogen/purescript-halogen)-inspired interface and runtime for your components, designed to integrate with React.
+Halo is a [Halogen](https://github.com/purescript-halogen/purescript-halogen)-inspired interface for React.
 
-It is implemented as a hook: `useHalo`; and simple component helpers are included: `component` and `component_`.
+It is available as a hook: `useHalo`; for building entire components there is: `component` and `component_`.
 
 ## Documentation
 
