@@ -21,9 +21,11 @@ import React.Halo.Internal.Types (ForkId(..), Lifecycle(..), SubscriptionId(..))
 import Unsafe.Reference (unsafeRefEq)
 import Wire.Event as Event
 
+-- | Interprets `HaloM` into the base monad `Aff`.
 evalHaloM :: forall props state action. HaloState props state action -> HaloM props state action Aff ~> Aff
 evalHaloM hs@(HaloState s) (HaloM halo) = foldFree (evalHaloF hs) halo
 
+-- | Interprets `HaloF` into the base monad `Aff`, keeping track of state in `HaloState`.
 evalHaloF :: forall props state action. HaloState props state action -> HaloF props state action Aff ~> Aff
 evalHaloF hs@(HaloState s) = case _ of
   Props k ->
@@ -74,14 +76,17 @@ evalHaloF hs@(HaloState s) = case _ of
     traverse_ (Aff.killFiber (Aff.error "Cancelled")) (Map.lookup fid forks)
     pure a
 
-type EvalSpec props action state m
+-- | A simpler interface for building the components eval function. The main lifecycle events map directly into
+-- | actions, so only the action handling logic needs to be written using `HaloM`.
+type EvalSpec props state action m
   = { onInitialize :: props -> Maybe action
     , onUpdate :: props -> props -> Maybe action
     , onAction :: action -> HaloM props state action m Unit
     , onFinalize :: Maybe action
     }
 
-defaultEval :: forall props action state m. EvalSpec props action state m
+-- | The empty `EvalSpec`.
+defaultEval :: forall props action state m. EvalSpec props state action m
 defaultEval =
   { onInitialize: \_ -> Nothing
   , onUpdate: \_ _ -> Nothing
@@ -89,13 +94,20 @@ defaultEval =
   , onFinalize: Nothing
   }
 
-makeEval :: forall props action state m. EvalSpec props action state m -> Lifecycle props action -> HaloM props state action m Unit
-makeEval eval = case _ of
+-- | Given an `EvalSpec` builder, it will return an eval function.
+makeEval ::
+  forall m action state props.
+  (EvalSpec props state action m -> EvalSpec props state action m) ->
+  Lifecycle props action -> HaloM props state action m Unit
+makeEval f = case _ of
   Initialize props -> traverse_ eval.onAction $ eval.onInitialize props
   Update old new -> traverse_ eval.onAction $ eval.onUpdate old new
   Action action -> eval.onAction action
   Finalize -> traverse_ eval.onAction eval.onFinalize
+  where
+  eval = f defaultEval
 
+-- | Simple way to run Aff logic asynchronously, while bringing errors back into Effect.
 runAff :: Aff Unit -> Effect Unit
 runAff = Aff.runAff_ (either throwError pure)
 
@@ -119,8 +131,8 @@ handleAction hs@(HaloState s) action = do
 runFinalize :: forall props state action. HaloState props state action -> Effect Unit
 runFinalize hs@(HaloState s) = do
   Ref.write true s.unmounted
-  runAff $ evalHaloM hs $ s.eval Finalize
   subscriptions <- Ref.modify' (\s' -> { state: Map.empty, value: s' }) s.subscriptions
   sequence_ (Map.values subscriptions)
   forks <- Ref.modify' (\s' -> { state: Map.empty, value: s' }) s.forks
   traverse_ (runAff <<< Aff.killFiber (Aff.error "Cancelled")) (Map.values forks)
+  runAff $ evalHaloM hs $ s.eval Finalize

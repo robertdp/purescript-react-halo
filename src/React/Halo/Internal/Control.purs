@@ -18,6 +18,13 @@ import Effect.Class (class MonadEffect, liftEffect)
 import React.Halo.Internal.Types (ForkId, SubscriptionId)
 import Wire.Event (Event)
 
+-- | The Halo evaluation algebra
+-- |
+-- | - `props` are the component props
+-- | - `state` is the component state
+-- | - `action` is the set of actions that the component handles
+-- | - `m` is the monad used during evaluation
+-- | - `a` is the result type
 data HaloF props state action m a
   = Props (props -> a)
   | State (state -> Tuple a state)
@@ -39,6 +46,13 @@ instance functorHaloF :: Functor m => Functor (HaloF props state action m) where
     Fork m k -> Fork m (map f k)
     Kill fid a -> Kill fid (f a)
 
+-- | The Halo evaluation monad. It lifts the `HaloF` algebra into a free monad.
+-- |
+-- | - `props` are the component props
+-- | - `state` is the component state
+-- | - `action` is the set of actions that the component handles
+-- | - `m` is the monad used during evaluation
+-- | - `a` is the result type
 newtype HaloM props state action m a
   = HaloM (Free (HaloF props state action m) a)
 
@@ -84,6 +98,13 @@ instance monadTellHaloM :: MonadTell w m => MonadTell w (HaloM props state actio
 instance monadThrowHaloM :: MonadThrow e m => MonadThrow e (HaloM props state action m) where
   throwError = HaloM <<< liftF <<< Lift <<< throwError
 
+-- | The Halo parallel evaluation applicative. It lifts `HaloM` into a free applicative.
+-- |
+-- | - `props` are the component props
+-- | - `state` is the component state
+-- | - `action` is the set of actions that the component handles
+-- | - `m` is the monad used during evaluation
+-- | - `a` is the result type
 newtype HaloAp props state action m a
   = HaloAp (FreeAp (HaloM props state action m) a)
 
@@ -99,6 +120,7 @@ instance parallelHaloM :: Parallel (HaloAp props state action m) (HaloM props st
   parallel = HaloAp <<< liftFreeAp
   sequential = HaloM <<< liftF <<< Par
 
+-- | Hoist (transform) the base monad of a `HaloM` expression.
 hoist :: forall props state action m m'. Functor m => (m ~> m') -> HaloM props state action m ~> HaloM props state action m'
 hoist nat (HaloM component) = HaloM (hoistFree go component)
   where
@@ -113,20 +135,34 @@ hoist nat (HaloM component) = HaloM (hoistFree go component)
     Fork m k -> Fork (hoist nat m) k
     Kill fid a -> Kill fid a
 
+-- | Read the current props.
 props :: forall props m action state. HaloM props state action m props
 props = HaloM (liftF (Props identity))
 
-subscribe' :: forall m action state props. (SubscriptionId -> Event action) -> HaloM props state action m SubscriptionId
-subscribe' event = HaloM (liftF (Subscribe event identity))
-
+-- | Subscribe to new actions from an `Event`. Subscriptions will be automatically cancelled when the component
+-- | unmounts.
+-- |
+-- | Returns a `SubscriptionId` which can be used with `unsubscribe` to manually cancel a subscription.
 subscribe :: forall props state action m. Event action -> HaloM props state action m SubscriptionId
 subscribe = subscribe' <<< const
 
+-- | Same as `subscribe` but the event-producing logic is also passed the `SuscriptionId`. This is useful when events
+-- | need to unsubscribe themselves.
+subscribe' :: forall m action state props. (SubscriptionId -> Event action) -> HaloM props state action m SubscriptionId
+subscribe' event = HaloM (liftF (Subscribe event identity))
+
+-- | Cancels the event subscription belonging to the `SubscriptionId`.
 unsubscribe :: forall m action state props. SubscriptionId -> HaloM props state action m Unit
 unsubscribe sid = HaloM (liftF (Unsubscribe sid unit))
 
+-- | Start a `HaloM` process running independantly from the current "thread". Forks are tracked automatically and
+-- | killed when the `Finalize` event occurs (when the component unmounts). New forks can still be created during the
+-- | `Finalize` event, but once evaluation ends there will be no way of killing them.
+-- |
+-- | Returns a `ForkId` for the new process.
 fork :: forall m action state props. HaloM props state action m Unit -> HaloM props state action m ForkId
 fork m = HaloM (liftF (Fork m identity))
 
+-- | Kills the process belonging to the `ForkId`.
 kill :: forall m action state props. ForkId -> HaloM props state action m Unit
 kill fid = HaloM (liftF (Kill fid unit))

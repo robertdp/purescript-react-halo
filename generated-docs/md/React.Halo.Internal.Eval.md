@@ -6,35 +6,48 @@
 evalHaloM :: forall props state action. HaloState props state action -> (HaloM props state action Aff) ~> Aff
 ```
 
+Interprets `HaloM` into the base monad `Aff`.
+
 #### `evalHaloF`
 
 ``` purescript
 evalHaloF :: forall props state action. HaloState props state action -> (HaloF props state action Aff) ~> Aff
 ```
 
+Interprets `HaloF` into the base monad `Aff`, keeping track of state in `HaloState`.
+
 #### `EvalSpec`
 
 ``` purescript
-type EvalSpec props action state m = { onAction :: action -> HaloM props state action m Unit, onFinalize :: Maybe action, onInitialize :: props -> Maybe action, onUpdate :: props -> props -> Maybe action }
+type EvalSpec props state action m = { onAction :: action -> HaloM props state action m Unit, onFinalize :: Maybe action, onInitialize :: props -> Maybe action, onUpdate :: props -> props -> Maybe action }
 ```
+
+A simpler interface for building the components eval function. The main lifecycle events map directly into
+actions, so only the action handling logic needs to be written using `HaloM`.
 
 #### `defaultEval`
 
 ``` purescript
-defaultEval :: forall props action state m. EvalSpec props action state m
+defaultEval :: forall props action state m. EvalSpec props state action m
 ```
+
+The empty `EvalSpec`.
 
 #### `makeEval`
 
 ``` purescript
-makeEval :: forall props action state m. EvalSpec props action state m -> Lifecycle props action -> HaloM props state action m Unit
+makeEval :: forall m action state props. (EvalSpec props state action m -> EvalSpec props state action m) -> Lifecycle props action -> HaloM props state action m Unit
 ```
+
+Given an `EvalSpec` builder, it will return an eval function.
 
 #### `runAff`
 
 ``` purescript
 runAff :: Aff Unit -> Effect Unit
 ```
+
+Simple way to run Aff logic asynchronously, while bringing errors back into Effect.
 
 #### `runInitialize`
 

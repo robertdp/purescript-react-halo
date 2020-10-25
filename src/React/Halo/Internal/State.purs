@@ -10,6 +10,7 @@ import Effect.Ref as Ref
 import React.Halo.Internal.Control (HaloM)
 import React.Halo.Internal.Types (ForkId, Lifecycle, SubscriptionId)
 
+-- | HThe alo component state used during evaluation.
 newtype HaloState props state action
   = HaloState
   { eval :: Lifecycle props action -> HaloM props state action Aff Unit
@@ -22,6 +23,7 @@ newtype HaloState props state action
   , forks :: Ref (Map ForkId (Fiber Unit))
   }
 
+-- | Creates a starting `HaloState`, ready for initialization.
 createInitialState ::
   forall props state action.
   state ->
@@ -36,5 +38,6 @@ createInitialState initialState eval render props' = do
   forks <- Ref.new Map.empty
   pure $ HaloState { eval, render, unmounted, props, state, fresh: fresh', subscriptions, forks }
 
+-- | Issue a new identifier, unique to this component.
 fresh :: forall props state action a. (Int -> a) -> HaloState props state action -> Effect a
 fresh f (HaloState s) = Ref.modify' (\a -> { state: a + 1, value: f a }) s.fresh

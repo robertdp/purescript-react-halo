@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "spago build"
+    "build": "spago build",
+    "docs": "rimraf ./output/React.Halo.* && spago docs --format markdown"
   },
   "author": "",
   "license": "ISC",
@@ -14,6 +15,7 @@
     "purescript": "^0.13.8",
     "purescript-psa": "^0.8.0",
     "purty": "^6.2.0",
+    "rimraf": "^3.0.2",
     "spago": "^0.16.0"
   }
 }
