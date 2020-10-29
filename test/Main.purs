@@ -1,11 +1,13 @@
 module Test.Main where
 
 import Prelude
+import Data.Maybe (Maybe(..))
 import Effect (Effect)
-import Effect.Aff (launchAff_)
+import Effect.Aff (Milliseconds(..), delay, launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Ref as Ref
-import React.Halo (Lifecycle(..), modify_)
+import React.Halo (liftAff)
+import React.Halo as Halo
 import React.Halo.Internal.Eval as Eval
 import React.Halo.Internal.State as State
 import Test.Spec (Spec, describe, it)
@@ -44,7 +46,7 @@ runPropsTests = do
       count <- Ref.new 0
       let
         eval = case _ of
-          Update _ _ -> liftEffect $ Ref.modify_ (add 1) count
+          Halo.Update _ _ -> liftEffect $ Ref.modify_ (add 1) count
           _ -> pure unit
 
         initialProps = { value: "" }
@@ -63,7 +65,7 @@ runStateTests = do
     value <- read
     value `shouldEqual` { value: "first test" }
     expect 2
-  it "does not modify the state when the reference does not change" do
+  it "does not modify the state when the reference has not changed" do
     { modify, expect, read } <- makeState { value: "" }
     modify identity
     value <- read
@@ -84,7 +86,7 @@ runStateTests = do
         expect x = liftEffect (Ref.read count) >>= shouldEqual x
 
         eval = case _ of
-          Action f -> modify_ f
+          Halo.Action f -> Halo.modify_ f
           _ -> pure unit
       state <- State.createInitialState { props: unit, initialState, eval, update }
       Eval.runInitialize state
@@ -96,7 +98,36 @@ runSubscriptionTests :: Spec Unit
 runSubscriptionTests = pure unit
 
 runParallelismTests :: Spec Unit
-runParallelismTests = pure unit
+runParallelismTests = do
+  it "should run logic in parallel" do
+    state <-
+      liftEffect do
+        internalState <- Ref.new Nothing
+        state <-
+          State.createInitialState
+            { props: unit
+            , initialState: 0
+            , update: \x -> Ref.write (Just x) internalState
+            , eval:
+                \_ -> do
+                  c <-
+                    Halo.sequential ado
+                      a <-
+                        Halo.parallel do
+                          liftAff $ delay $ Milliseconds 1_000.0
+                          pure 1
+                      b <-
+                        Halo.parallel do
+                          liftAff $ delay $ Milliseconds 1_000.0
+                          pure 2
+                      in a + b
+                  Halo.put c
+            }
+        Eval.runInitialize state
+        pure internalState
+    delay $ Milliseconds 1_100.0
+    c <- liftEffect $ Ref.read state
+    c `shouldEqual` (Just 3)
 
 runForkingTests :: Spec Unit
 runForkingTests = pure unit
