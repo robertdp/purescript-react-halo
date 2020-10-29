@@ -33,14 +33,9 @@ useHalo ::
 useHalo { props, initialState, eval } =
   React.coerceHook React.do
     state /\ setState <- React.useState' initialState
-    halo <- React.useMemo unit \_ -> unsafePerformEffect (createInitialState initialState eval setState props)
-    React.useEffectOnce do
-      runInitialize halo props
-      pure do
-        runFinalize halo
-    React.useEffectAlways do
-      handleUpdate halo props
-      mempty
+    halo <- React.useMemo unit \_ -> unsafePerformEffect (createInitialState { props, initialState, eval, update: setState })
+    React.useEffectOnce (runInitialize halo *> pure (runFinalize halo))
+    React.useEffectAlways (handleUpdate halo props *> mempty)
     pure (state /\ handleAction halo)
 
 type ComponentSpec props state action m

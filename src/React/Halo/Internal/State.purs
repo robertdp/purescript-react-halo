@@ -14,8 +14,8 @@ import React.Halo.Internal.Types (ForkId, Lifecycle, SubscriptionId)
 newtype HaloState props state action
   = HaloState
   { eval :: Lifecycle props action -> HaloM props state action Aff Unit
-  , render :: state -> Effect Unit
-  , unmounted :: Ref Boolean
+  , update :: state -> Effect Unit
+  , finalized :: Ref Boolean
   , props :: Ref props
   , state :: Ref state
   , fresh :: Ref Int
@@ -26,17 +26,20 @@ newtype HaloState props state action
 -- | Creates a starting `HaloState`, ready for initialization.
 createInitialState ::
   forall props state action.
-  state ->
-  (Lifecycle props action -> HaloM props state action Aff Unit) ->
-  (state -> Effect Unit) -> props -> Effect (HaloState props state action)
-createInitialState initialState eval render props' = do
-  unmounted <- Ref.new false
+  { props :: props
+  , initialState :: state
+  , eval :: Lifecycle props action -> HaloM props state action Aff Unit
+  , update :: state -> Effect Unit
+  } ->
+  Effect (HaloState props state action)
+createInitialState spec@{ eval, update } = do
+  finalized <- Ref.new false
   fresh' <- Ref.new 0
-  props <- Ref.new props'
-  state <- Ref.new initialState
+  props <- Ref.new spec.props
+  state <- Ref.new spec.initialState
   subscriptions <- Ref.new Map.empty
   forks <- Ref.new Map.empty
-  pure $ HaloState { eval, render, unmounted, props, state, fresh: fresh', subscriptions, forks }
+  pure $ HaloState { eval, update, finalized, props, state, fresh: fresh', subscriptions, forks }
 
 -- | Issue a new identifier, unique to this component.
 fresh :: forall props state action a. (Int -> a) -> HaloState props state action -> Effect a

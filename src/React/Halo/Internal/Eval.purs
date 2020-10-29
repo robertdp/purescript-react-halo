@@ -39,13 +39,13 @@ evalHaloF hs@(HaloState s) = case _ of
         Tuple a state'
           | not unsafeRefEq state state' -> do
             Ref.write state' s.state
-            s.render state'
+            s.update state'
             pure a
           | otherwise -> pure a
   Subscribe sub k ->
     liftEffect do
       sid <- State.fresh SubscriptionId hs
-      unlessM (Ref.read s.unmounted) do
+      unlessM (Ref.read s.finalized) do
         canceller <- Event.subscribe (sub sid) (handleAction hs)
         Ref.modify_ (Map.insert sid canceller) s.subscriptions
       pure (k sid)
@@ -111,9 +111,9 @@ makeEval f = case _ of
 runAff :: Aff Unit -> Effect Unit
 runAff = Aff.runAff_ (either throwError pure)
 
-runInitialize :: forall props state action. HaloState props action state -> props -> Effect Unit
-runInitialize hs@(HaloState s) props = do
-  Ref.write props s.props
+runInitialize :: forall props state action. HaloState props action state -> Effect Unit
+runInitialize hs@(HaloState s) = do
+  props <- Ref.read s.props
   runAff $ evalHaloM hs $ s.eval $ Initialize props
 
 handleUpdate :: forall props state action. HaloState props action state -> props -> Effect Unit
@@ -125,12 +125,12 @@ handleUpdate hs@(HaloState s) props = do
 
 handleAction :: forall props state action. HaloState props state action -> action -> Effect Unit
 handleAction hs@(HaloState s) action = do
-  unlessM (Ref.read s.unmounted) do
+  unlessM (Ref.read s.finalized) do
     runAff $ evalHaloM hs $ s.eval $ Action action
 
 runFinalize :: forall props state action. HaloState props state action -> Effect Unit
 runFinalize hs@(HaloState s) = do
-  Ref.write true s.unmounted
+  Ref.write true s.finalized
   subscriptions <- Ref.modify' (\s' -> { state: Map.empty, value: s' }) s.subscriptions
   sequence_ (Map.values subscriptions)
   forks <- Ref.modify' (\s' -> { state: Map.empty, value: s' }) s.forks
