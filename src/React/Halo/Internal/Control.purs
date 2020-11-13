@@ -131,6 +131,8 @@ derive newtype instance applyHaloAp :: Apply (HaloAp props state action m)
 
 derive newtype instance applicativeHaloAp :: Applicative (HaloAp props state action m)
 
+-- | Races effects in parallel. Returns the first successful result or the first error if all fail with an exception.
+-- | Losing branches will be cancelled.
 instance altHaloAp :: Alt (HaloAp props state action m) where
   alt a b = HaloAp (liftFreeAp (Alt a b))
 
