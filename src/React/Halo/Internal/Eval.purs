@@ -15,7 +15,7 @@ import Effect.Aff as Aff
 import Effect.Aff.Class (liftAff)
 import Effect.Class (liftEffect)
 import Effect.Ref as Ref
-import React.Halo.Internal.Control (HaloAp(..), HaloM(..), HaloParF(..), HaloSeqF(..))
+import React.Halo.Internal.Control (HaloAp(..), HaloM(..), HaloParF(..), HaloF(..))
 import React.Halo.Internal.State (HaloState(..))
 import React.Halo.Internal.State as State
 import React.Halo.Internal.Types (ForkId(..), Lifecycle(..), SubscriptionId(..))
@@ -24,15 +24,15 @@ import Wire.Event as Event
 
 -- | Interprets `HaloM` into the base monad `Aff`.
 evalHaloM :: forall props state action. HaloState props state action -> HaloM props state action Aff ~> Aff
-evalHaloM hs@(HaloState s) (HaloM halo) = foldFree (evalHaloSeqF hs) halo
+evalHaloM hs@(HaloState s) (HaloM halo) = foldFree (evalHaloF hs) halo
 
 -- | Interprets `HaloAp` into the base applicative `ParAff`.
 evalHaloAp :: forall props state action. HaloState props state action -> HaloAp props state action Aff ~> ParAff
 evalHaloAp hs@(HaloState s) (HaloAp halo) = foldFreeAp (evalHaloParF hs) halo
 
--- | Interprets `HaloSeqF` into the base monad `Aff`, keeping track of state in `HaloState`.
-evalHaloSeqF :: forall props state action. HaloState props state action -> HaloSeqF props state action Aff ~> Aff
-evalHaloSeqF hs@(HaloState s) = case _ of
+-- | Interprets `HaloF` into the base monad `Aff`, keeping track of state in `HaloState`.
+evalHaloF :: forall props state action. HaloState props state action -> HaloF props state action Aff ~> Aff
+evalHaloF hs@(HaloState s) = case _ of
   Props k ->
     liftEffect do
       props <- Ref.read s.props
