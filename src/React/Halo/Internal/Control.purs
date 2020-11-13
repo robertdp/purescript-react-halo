@@ -45,7 +45,7 @@ data HaloSeqF props state action m a
 -- | - `a` is the result type
 data HaloParF props state action m a
   = Seq (HaloM props state action m a)
-  | Race (HaloAp props state action m a) (HaloAp props state action m a)
+  | Alt (HaloAp props state action m a) (HaloAp props state action m a)
 
 instance functorHaloSeqF :: Functor m => Functor (HaloSeqF props state action m) where
   map f = case _ of
@@ -61,7 +61,7 @@ instance functorHaloSeqF :: Functor m => Functor (HaloSeqF props state action m)
 instance functorHaloParF :: Functor m => Functor (HaloParF props state action m) where
   map f = case _ of
     Seq seq -> Seq (map f seq)
-    Race a b -> Race (map f a) (map f b)
+    Alt a b -> Alt (map f a) (map f b)
 
 -- | The Halo evaluation monad. It lifts the `HaloSeqF` algebra into a free monad.
 -- |
@@ -107,13 +107,13 @@ instance monadRecHaloM :: MonadRec (HaloM props state action m) where
           Done y -> pure y
 
 instance monadAskHaloM :: MonadAsk r m => MonadAsk r (HaloM props state action m) where
-  ask = HaloM $ liftF $ Lift ask
+  ask = lift ask
 
 instance monadTellHaloM :: MonadTell w m => MonadTell w (HaloM props state action m) where
-  tell = HaloM <<< liftF <<< Lift <<< tell
+  tell = lift <<< tell
 
 instance monadThrowHaloM :: MonadThrow e m => MonadThrow e (HaloM props state action m) where
-  throwError = HaloM <<< liftF <<< Lift <<< throwError
+  throwError = lift <<< throwError
 
 -- | The Halo parallel evaluation applicative. It lifts `HaloM` into a free applicative.
 -- |
@@ -132,7 +132,7 @@ derive newtype instance applyHaloAp :: Apply (HaloAp props state action m)
 derive newtype instance applicativeHaloAp :: Applicative (HaloAp props state action m)
 
 instance altHaloAp :: Alt (HaloAp props state action m) where
-  alt a b = HaloAp (liftFreeAp (Race a b))
+  alt a b = HaloAp (liftFreeAp (Alt a b))
 
 instance plusHaloAp :: (Monad m, Plus m) => Plus (HaloAp props state action m) where
   empty = parallel (lift empty)
@@ -163,7 +163,7 @@ hoistAp nat (HaloAp component) = HaloAp (hoistFreeAp go component)
   go :: HaloParF props state action m ~> HaloParF props state action m'
   go = case _ of
     Seq seq -> Seq (hoist nat seq)
-    Race a b -> Race (hoistAp nat a) (hoistAp nat b)
+    Alt a b -> Alt (hoistAp nat a) (hoistAp nat b)
 
 -- | Read the current props.
 props :: forall props m action state. HaloM props state action m props
