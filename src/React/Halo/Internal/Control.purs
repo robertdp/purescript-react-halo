@@ -10,7 +10,8 @@ import Control.Monad.Rec.Class (class MonadRec, Step(..), tailRecM)
 import Control.Monad.State (class MonadState)
 import Control.Monad.Trans.Class (class MonadTrans, lift)
 import Control.Monad.Writer (class MonadTell, tell)
-import Control.Parallel (class Parallel)
+import Control.Parallel (class Parallel, parallel)
+import Control.Plus (class Plus, empty)
 import Data.Bifunctor (lmap)
 import Data.Tuple (Tuple)
 import Effect.Aff.Class (class MonadAff, liftAff)
@@ -132,6 +133,9 @@ derive newtype instance applicativeHaloAp :: Applicative (HaloAp props state act
 
 instance altHaloAp :: Alt (HaloAp props state action m) where
   alt a b = HaloAp (liftFreeAp (Race a b))
+
+instance plusHaloAp :: (Monad m, Plus m) => Plus (HaloAp props state action m) where
+  empty = parallel (lift empty)
 
 instance parallelHaloM :: Parallel (HaloAp props state action m) (HaloM props state action m) where
   parallel = HaloAp <<< liftFreeAp <<< Seq
