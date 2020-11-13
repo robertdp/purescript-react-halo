@@ -1,6 +1,6 @@
 let conf = ./spago.dhall
 
-let dependencies = [ "console", "spec" ]
+let dependencies = [ "spec" ]
 
 let sources = [ "test/**/*.purs" ]
 

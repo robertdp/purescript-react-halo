@@ -1,6 +1,7 @@
 module React.Halo.Internal.Eval where
 
 import Prelude
+import Control.Alt ((<|>))
 import Control.Applicative.Free (hoistFreeAp, retractFreeAp)
 import Control.Monad.Free (foldFree)
 import Data.Either (either)
@@ -9,7 +10,7 @@ import Data.Map as Map
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
-import Effect.Aff (Aff, finally, parallel, sequential, throwError)
+import Effect.Aff (Aff, ParAff, finally, parallel, sequential, throwError)
 import Effect.Aff as Aff
 import Effect.Aff.Class (liftAff)
 import Effect.Class (liftEffect)
@@ -24,6 +25,10 @@ import Wire.Event as Event
 -- | Interprets `HaloM` into the base monad `Aff`.
 evalHaloM :: forall props state action. HaloState props state action -> HaloM props state action Aff ~> Aff
 evalHaloM hs@(HaloState s) (HaloM halo) = foldFree (evalHaloF hs) halo
+
+-- | Interprets `HaloAp` into the base applicative `ParAff`.
+evalHaloAp :: forall props state action. HaloState props state action -> HaloAp props state action Aff ~> ParAff
+evalHaloAp hs@(HaloState s) (HaloAp halo) = retractFreeAp $ hoistFreeAp (parallel <<< evalHaloM hs) halo
 
 -- | Interprets `HaloF` into the base monad `Aff`, keeping track of state in `HaloState`.
 evalHaloF :: forall props state action. HaloState props state action -> HaloF props state action Aff ~> Aff
@@ -55,7 +60,8 @@ evalHaloF hs@(HaloState s) = case _ of
       sequence_ canceller
       pure a
   Lift m -> liftAff m
-  Par (HaloAp p) -> sequential $ retractFreeAp $ hoistFreeAp (parallel <<< evalHaloM hs) p
+  Par p -> sequential $ evalHaloAp hs p
+  Race p p' -> sequential $ evalHaloAp hs p <|> evalHaloAp hs p'
   Fork fh k ->
     liftEffect do
       fid <- State.fresh ForkId hs

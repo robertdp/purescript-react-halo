@@ -27,7 +27,7 @@ newtype HaloState props state action
 createInitialState ::
   forall props state action.
   { props :: props
-  , initialState :: state
+  , state :: state
   , eval :: Lifecycle props action -> HaloM props state action Aff Unit
   , update :: state -> Effect Unit
   } ->
@@ -36,7 +36,7 @@ createInitialState spec@{ eval, update } = do
   finalized <- Ref.new false
   fresh' <- Ref.new 0
   props <- Ref.new spec.props
-  state <- Ref.new spec.initialState
+  state <- Ref.new spec.state
   subscriptions <- Ref.new Map.empty
   forks <- Ref.new Map.empty
   pure $ HaloState { eval, update, finalized, props, state, fresh: fresh', subscriptions, forks }

@@ -1,6 +1,7 @@
 module React.Halo.Internal.Control where
 
 import Prelude
+import Control.Alt (class Alt)
 import Control.Applicative.Free (FreeAp, hoistFreeAp, liftFreeAp)
 import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Control.Monad.Free (Free, hoistFree, liftF)
@@ -32,6 +33,7 @@ data HaloF props state action m a
   | Unsubscribe SubscriptionId a
   | Lift (m a)
   | Par (HaloAp props state action m a)
+  | Race (HaloAp props state action m a) (HaloAp props state action m a)
   | Fork (HaloM props state action m Unit) (ForkId -> a)
   | Kill ForkId a
 
@@ -43,6 +45,7 @@ instance functorHaloF :: Functor m => Functor (HaloF props state action m) where
     Unsubscribe sid a -> Unsubscribe sid (f a)
     Lift m -> Lift (map f m)
     Par par -> Par (map f par)
+    Race par par' -> Race (map f par) (map f par')
     Fork m k -> Fork m (map f k)
     Kill fid a -> Kill fid (f a)
 
@@ -116,6 +119,9 @@ derive newtype instance applyHaloAp :: Apply (HaloAp props state action m)
 
 derive newtype instance applicativeHaloAp :: Applicative (HaloAp props state action m)
 
+instance altHaloAp :: Alt (HaloAp props state action m) where
+  alt a b = HaloAp (liftFreeAp (HaloM (liftF (Race a b))))
+
 instance parallelHaloM :: Parallel (HaloAp props state action m) (HaloM props state action m) where
   parallel = HaloAp <<< liftFreeAp
   sequential = HaloM <<< liftF <<< Par
@@ -132,6 +138,7 @@ hoist nat (HaloM component) = HaloM (hoistFree go component)
     Unsubscribe sid a -> Unsubscribe sid a
     Lift m -> Lift (nat m)
     Par par -> Par (over HaloAp (hoistFreeAp (hoist nat)) par)
+    Race par par' -> Race (over HaloAp (hoistFreeAp (hoist nat)) par) (over HaloAp (hoistFreeAp (hoist nat)) par')
     Fork m k -> Fork (hoist nat m) k
     Kill fid a -> Kill fid a
 
