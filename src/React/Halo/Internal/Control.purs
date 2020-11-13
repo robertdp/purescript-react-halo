@@ -26,7 +26,7 @@ import Wire.Event (Event)
 -- | - `action` is the set of actions that the component handles
 -- | - `m` is the monad used during evaluation
 -- | - `a` is the result type
-data SeqHaloF props state action m a
+data HaloSeqF props state action m a
   = Props (props -> a)
   | State (state -> Tuple a state)
   | Subscribe (SubscriptionId -> Event action) (SubscriptionId -> a)
@@ -43,11 +43,11 @@ data SeqHaloF props state action m a
 -- | - `action` is the set of actions that the component handles
 -- | - `m` is the monad used during evaluation
 -- | - `a` is the result type
-data ParHaloF props state action m a
+data HaloParF props state action m a
   = Seq (HaloM props state action m a)
   | Race (HaloAp props state action m a) (HaloAp props state action m a)
 
-instance functorSeqHaloF :: Functor m => Functor (SeqHaloF props state action m) where
+instance functorHaloSeqF :: Functor m => Functor (HaloSeqF props state action m) where
   map f = case _ of
     Props k -> Props (f <<< k)
     State k -> State (lmap f <<< k)
@@ -58,12 +58,12 @@ instance functorSeqHaloF :: Functor m => Functor (SeqHaloF props state action m)
     Fork m k -> Fork m (map f k)
     Kill fid a -> Kill fid (f a)
 
-instance functorParHaloF :: Functor m => Functor (ParHaloF props state action m) where
+instance functorHaloParF :: Functor m => Functor (HaloParF props state action m) where
   map f = case _ of
     Seq seq -> Seq (map f seq)
     Race a b -> Race (map f a) (map f b)
 
--- | The Halo evaluation monad. It lifts the `SeqHaloF` algebra into a free monad.
+-- | The Halo evaluation monad. It lifts the `HaloSeqF` algebra into a free monad.
 -- |
 -- | - `props` are the component props
 -- | - `state` is the component state
@@ -71,7 +71,7 @@ instance functorParHaloF :: Functor m => Functor (ParHaloF props state action m)
 -- | - `m` is the monad used during evaluation
 -- | - `a` is the result type
 newtype HaloM props state action m a
-  = HaloM (Free (SeqHaloF props state action m) a)
+  = HaloM (Free (HaloSeqF props state action m) a)
 
 derive newtype instance functorHaloM :: Functor (HaloM props state action m)
 
@@ -123,7 +123,7 @@ instance monadThrowHaloM :: MonadThrow e m => MonadThrow e (HaloM props state ac
 -- | - `m` is the monad used during evaluation
 -- | - `a` is the result type
 newtype HaloAp props state action m a
-  = HaloAp (FreeAp (ParHaloF props state action m) a)
+  = HaloAp (FreeAp (HaloParF props state action m) a)
 
 derive newtype instance functorHaloAp :: Functor (HaloAp props state action m)
 
@@ -145,7 +145,7 @@ instance parallelHaloM :: Parallel (HaloAp props state action m) (HaloM props st
 hoistM :: forall props state action m m'. Functor m => (m ~> m') -> HaloM props state action m ~> HaloM props state action m'
 hoistM nat (HaloM component) = HaloM (hoistFree go component)
   where
-  go :: SeqHaloF props state action m ~> SeqHaloF props state action m'
+  go :: HaloSeqF props state action m ~> HaloSeqF props state action m'
   go = case _ of
     Props k -> Props k
     State k -> State k
@@ -160,7 +160,7 @@ hoistM nat (HaloM component) = HaloM (hoistFree go component)
 hoistAp :: forall props state action m m'. Functor m => (m ~> m') -> HaloAp props state action m ~> HaloAp props state action m'
 hoistAp nat (HaloAp component) = HaloAp (hoistFreeAp go component)
   where
-  go :: ParHaloF props state action m ~> ParHaloF props state action m'
+  go :: HaloParF props state action m ~> HaloParF props state action m'
   go = case _ of
     Seq seq -> Seq (hoistM nat seq)
     Race a b -> Race (hoistAp nat a) (hoistAp nat b)

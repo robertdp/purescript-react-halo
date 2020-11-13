@@ -15,7 +15,7 @@ import Effect.Aff as Aff
 import Effect.Aff.Class (liftAff)
 import Effect.Class (liftEffect)
 import Effect.Ref as Ref
-import React.Halo.Internal.Control (HaloAp(..), HaloM(..), ParHaloF(..), SeqHaloF(..))
+import React.Halo.Internal.Control (HaloAp(..), HaloM(..), HaloParF(..), HaloSeqF(..))
 import React.Halo.Internal.State (HaloState(..))
 import React.Halo.Internal.State as State
 import React.Halo.Internal.Types (ForkId(..), Lifecycle(..), SubscriptionId(..))
@@ -24,15 +24,15 @@ import Wire.Event as Event
 
 -- | Interprets `HaloM` into the base monad `Aff`.
 evalHaloM :: forall props state action. HaloState props state action -> HaloM props state action Aff ~> Aff
-evalHaloM hs@(HaloState s) (HaloM halo) = foldFree (evalSeqHaloF hs) halo
+evalHaloM hs@(HaloState s) (HaloM halo) = foldFree (evalHaloSeqF hs) halo
 
 -- | Interprets `HaloAp` into the base applicative `ParAff`.
 evalHaloAp :: forall props state action. HaloState props state action -> HaloAp props state action Aff ~> ParAff
-evalHaloAp hs@(HaloState s) (HaloAp halo) = foldFreeAp (evalParHaloF hs) halo
+evalHaloAp hs@(HaloState s) (HaloAp halo) = foldFreeAp (evalHaloParF hs) halo
 
--- | Interprets `SeqHaloF` into the base monad `Aff`, keeping track of state in `HaloState`.
-evalSeqHaloF :: forall props state action. HaloState props state action -> SeqHaloF props state action Aff ~> Aff
-evalSeqHaloF hs@(HaloState s) = case _ of
+-- | Interprets `HaloSeqF` into the base monad `Aff`, keeping track of state in `HaloState`.
+evalHaloSeqF :: forall props state action. HaloState props state action -> HaloSeqF props state action Aff ~> Aff
+evalHaloSeqF hs@(HaloState s) = case _ of
   Props k ->
     liftEffect do
       props <- Ref.read s.props
@@ -81,9 +81,9 @@ evalSeqHaloF hs@(HaloState s) = case _ of
     traverse_ (Aff.killFiber (Aff.error "Cancelled")) (Map.lookup fid forks)
     pure a
 
--- | Interprets `ParHaloF` into the base applicative `ParAff`, keeping track of state in `HaloState`.
-evalParHaloF :: forall props state action. HaloState props state action -> ParHaloF props state action Aff ~> ParAff
-evalParHaloF hs@(HaloState s) = case _ of
+-- | Interprets `HaloParF` into the base applicative `ParAff`, keeping track of state in `HaloState`.
+evalHaloParF :: forall props state action. HaloState props state action -> HaloParF props state action Aff ~> ParAff
+evalHaloParF hs@(HaloState s) = case _ of
   Seq seq -> parallel $ evalHaloM hs seq
   Race a b -> evalHaloAp hs a <|> evalHaloAp hs b
 
