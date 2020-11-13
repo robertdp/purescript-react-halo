@@ -85,7 +85,7 @@ evalHaloSeqF hs@(HaloState s) = case _ of
 evalHaloParF :: forall props state action. HaloState props state action -> HaloParF props state action Aff ~> ParAff
 evalHaloParF hs@(HaloState s) = case _ of
   Seq seq -> parallel $ evalHaloM hs seq
-  Race a b -> evalHaloAp hs a <|> evalHaloAp hs b
+  Alt a b -> evalHaloAp hs a <|> evalHaloAp hs b
 
 -- | A simpler interface for building the components eval function. The main lifecycle events map directly into
 -- | actions, so only the action handling logic needs to be written using `HaloM`.
