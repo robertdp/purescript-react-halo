@@ -142,8 +142,8 @@ instance parallelHaloM :: Parallel (HaloAp props state action m) (HaloM props st
   sequential = HaloM <<< liftF <<< Par
 
 -- | Hoist (transform) the base monad of a `HaloM` expression.
-hoistM :: forall props state action m m'. Functor m => (m ~> m') -> HaloM props state action m ~> HaloM props state action m'
-hoistM nat (HaloM component) = HaloM (hoistFree go component)
+hoist :: forall props state action m m'. Functor m => (m ~> m') -> HaloM props state action m ~> HaloM props state action m'
+hoist nat (HaloM component) = HaloM (hoistFree go component)
   where
   go :: HaloSeqF props state action m ~> HaloSeqF props state action m'
   go = case _ of
@@ -153,7 +153,7 @@ hoistM nat (HaloM component) = HaloM (hoistFree go component)
     Unsubscribe sid a -> Unsubscribe sid a
     Lift m -> Lift (nat m)
     Par par -> Par (hoistAp nat par)
-    Fork m k -> Fork (hoistM nat m) k
+    Fork m k -> Fork (hoist nat m) k
     Kill fid a -> Kill fid a
 
 -- | Hoist (transform) the base monad of a `HaloAp` expression.
@@ -162,7 +162,7 @@ hoistAp nat (HaloAp component) = HaloAp (hoistFreeAp go component)
   where
   go :: HaloParF props state action m ~> HaloParF props state action m'
   go = case _ of
-    Seq seq -> Seq (hoistM nat seq)
+    Seq seq -> Seq (hoist nat seq)
     Race a b -> Race (hoistAp nat a) (hoistAp nat b)
 
 -- | Read the current props.
