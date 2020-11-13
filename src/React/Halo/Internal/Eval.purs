@@ -2,7 +2,7 @@ module React.Halo.Internal.Eval where
 
 import Prelude
 import Control.Alt ((<|>))
-import Control.Applicative.Free (hoistFreeAp, retractFreeAp)
+import Control.Applicative.Free (foldFreeAp)
 import Control.Monad.Free (foldFree)
 import Data.Either (either)
 import Data.Foldable (sequence_, traverse_)
@@ -15,7 +15,7 @@ import Effect.Aff as Aff
 import Effect.Aff.Class (liftAff)
 import Effect.Class (liftEffect)
 import Effect.Ref as Ref
-import React.Halo.Internal.Control (HaloAp(..), HaloF(..), HaloM(..))
+import React.Halo.Internal.Control (HaloAp(..), HaloM(..), ParHaloF(..), SeqHaloF(..))
 import React.Halo.Internal.State (HaloState(..))
 import React.Halo.Internal.State as State
 import React.Halo.Internal.Types (ForkId(..), Lifecycle(..), SubscriptionId(..))
@@ -24,15 +24,15 @@ import Wire.Event as Event
 
 -- | Interprets `HaloM` into the base monad `Aff`.
 evalHaloM :: forall props state action. HaloState props state action -> HaloM props state action Aff ~> Aff
-evalHaloM hs@(HaloState s) (HaloM halo) = foldFree (evalHaloF hs) halo
+evalHaloM hs@(HaloState s) (HaloM halo) = foldFree (evalSeqHaloF hs) halo
 
 -- | Interprets `HaloAp` into the base applicative `ParAff`.
 evalHaloAp :: forall props state action. HaloState props state action -> HaloAp props state action Aff ~> ParAff
-evalHaloAp hs@(HaloState s) (HaloAp halo) = retractFreeAp $ hoistFreeAp (parallel <<< evalHaloM hs) halo
+evalHaloAp hs@(HaloState s) (HaloAp halo) = foldFreeAp (evalParHaloF hs) halo
 
--- | Interprets `HaloF` into the base monad `Aff`, keeping track of state in `HaloState`.
-evalHaloF :: forall props state action. HaloState props state action -> HaloF props state action Aff ~> Aff
-evalHaloF hs@(HaloState s) = case _ of
+-- | Interprets `SeqHaloF` into the base monad `Aff`, keeping track of state in `HaloState`.
+evalSeqHaloF :: forall props state action. HaloState props state action -> SeqHaloF props state action Aff ~> Aff
+evalSeqHaloF hs@(HaloState s) = case _ of
   Props k ->
     liftEffect do
       props <- Ref.read s.props
@@ -61,7 +61,6 @@ evalHaloF hs@(HaloState s) = case _ of
       pure a
   Lift m -> liftAff m
   Par p -> sequential $ evalHaloAp hs p
-  Race p p' -> sequential $ evalHaloAp hs p <|> evalHaloAp hs p'
   Fork fh k ->
     liftEffect do
       fid <- State.fresh ForkId hs
@@ -81,6 +80,12 @@ evalHaloF hs@(HaloState s) = case _ of
     forks <- liftEffect (Ref.read s.forks)
     traverse_ (Aff.killFiber (Aff.error "Cancelled")) (Map.lookup fid forks)
     pure a
+
+-- | Interprets `ParHaloF` into the base applicative `ParAff`, keeping track of state in `HaloState`.
+evalParHaloF :: forall props state action. HaloState props state action -> ParHaloF props state action Aff ~> ParAff
+evalParHaloF hs@(HaloState s) = case _ of
+  Seq seq -> parallel $ evalHaloM hs seq
+  Race a b -> evalHaloAp hs a <|> evalHaloAp hs b
 
 -- | A simpler interface for building the components eval function. The main lifecycle events map directly into
 -- | actions, so only the action handling logic needs to be written using `HaloM`.
