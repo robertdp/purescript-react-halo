@@ -6,7 +6,15 @@
 evalHaloM :: forall props state action. HaloState props state action -> (HaloM props state action Aff) ~> Aff
 ```
 
-Interprets `HaloM` into the base monad `Aff`.
+Interprets `HaloM` into the base monad `Aff` for asynchronous effects.
+
+#### `evalHaloAp`
+
+``` purescript
+evalHaloAp :: forall props state action. HaloState props state action -> (HaloAp props state action Aff) ~> ParAff
+```
+
+Interprets `HaloAp` into the base applicative `ParAff` for parallel effects.
 
 #### `evalHaloF`
 
@@ -52,7 +60,7 @@ Simple way to run Aff logic asynchronously, while bringing errors back into Effe
 #### `runInitialize`
 
 ``` purescript
-runInitialize :: forall props state action. HaloState props action state -> props -> Effect Unit
+runInitialize :: forall props state action. HaloState props action state -> Effect Unit
 ```
 
 #### `handleUpdate`

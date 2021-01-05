@@ -268,7 +268,6 @@ The Halo parallel evaluation applicative. It lifts `HaloM` into a free applicati
 
 ##### Instances
 ``` purescript
-Newtype (HaloAp props state action m a) _
 Functor (HaloAp props state action m)
 Apply (HaloAp props state action m)
 Applicative (HaloAp props state action m)
