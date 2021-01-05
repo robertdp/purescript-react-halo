@@ -90,13 +90,13 @@ instance monadRecHaloM :: MonadRec (HaloM props state action m) where
           Done y -> pure y
 
 instance monadAskHaloM :: MonadAsk r m => MonadAsk r (HaloM props state action m) where
-  ask = HaloM $ liftF $ Lift ask
+  ask = lift ask
 
 instance monadTellHaloM :: MonadTell w m => MonadTell w (HaloM props state action m) where
-  tell = HaloM <<< liftF <<< Lift <<< tell
+  tell = lift <<< tell
 
 instance monadThrowHaloM :: MonadThrow e m => MonadThrow e (HaloM props state action m) where
-  throwError = HaloM <<< liftF <<< Lift <<< throwError
+  throwError = lift <<< throwError
 
 -- | The Halo parallel evaluation applicative. It lifts `HaloM` into a free applicative.
 -- |
@@ -134,6 +134,10 @@ hoist nat (HaloM component) = HaloM (hoistFree go component)
     Par par -> Par (over HaloAp (hoistFreeAp (hoist nat)) par)
     Fork m k -> Fork (hoist nat m) k
     Kill fid a -> Kill fid a
+
+-- | Hoist (transform) the base applicative of a `HaloAp` expression.
+hoistAp :: forall props state action m m'. Functor m => (m ~> m') -> HaloAp props state action m ~> HaloAp props state action m'
+hoistAp nat (HaloAp component) = HaloAp (hoistFreeAp (hoist nat) component)
 
 -- | Read the current props.
 props :: forall props m action state. HaloM props state action m props

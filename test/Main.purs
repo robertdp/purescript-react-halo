@@ -52,7 +52,7 @@ runPropsTests = do
         initialProps = { value: "" }
 
         expect x = liftEffect (Ref.read count) >>= shouldEqual x
-      state <- State.createInitialState { props: initialProps, initialState: unit, eval, update: mempty }
+      state <- State.createInitialState { props: initialProps, state: unit, eval, update: mempty }
       Eval.runInitialize state
       pure { state, initialProps, expect }
 
@@ -88,7 +88,7 @@ runStateTests = do
         eval = case _ of
           Halo.Action f -> Halo.modify_ f
           _ -> pure unit
-      state <- State.createInitialState { props: unit, initialState, eval, update }
+      state <- State.createInitialState { props: unit, state: initialState, eval, update }
       Eval.runInitialize state
       let
         modify = liftEffect <<< Eval.handleAction state
@@ -106,7 +106,7 @@ runParallelismTests = do
         state <-
           State.createInitialState
             { props: unit
-            , initialState: 0
+            , state: 0
             , update: \x -> Ref.write (Just x) internalState
             , eval:
                 \_ -> do

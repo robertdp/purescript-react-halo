@@ -1,7 +1,7 @@
 module React.Halo.Internal.Eval where
 
 import Prelude
-import Control.Applicative.Free (hoistFreeAp, retractFreeAp)
+import Control.Applicative.Free (foldFreeAp)
 import Control.Monad.Free (foldFree)
 import Data.Either (either)
 import Data.Foldable (sequence_, traverse_)
@@ -9,9 +9,8 @@ import Data.Map as Map
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
-import Effect.Aff (Aff, finally, parallel, sequential, throwError)
+import Effect.Aff (Aff, ParAff, finally, parallel, sequential, throwError)
 import Effect.Aff as Aff
-import Effect.Aff.Class (liftAff)
 import Effect.Class (liftEffect)
 import Effect.Ref as Ref
 import React.Halo.Internal.Control (HaloAp(..), HaloF(..), HaloM(..))
@@ -21,9 +20,13 @@ import React.Halo.Internal.Types (ForkId(..), Lifecycle(..), SubscriptionId(..))
 import Unsafe.Reference (unsafeRefEq)
 import Wire.Event as Event
 
--- | Interprets `HaloM` into the base monad `Aff`.
+-- | Interprets `HaloM` into the base monad `Aff` for asynchronous effects.
 evalHaloM :: forall props state action. HaloState props state action -> HaloM props state action Aff ~> Aff
-evalHaloM hs@(HaloState s) (HaloM halo) = foldFree (evalHaloF hs) halo
+evalHaloM hs (HaloM halo) = foldFree (evalHaloF hs) halo
+
+-- | Interprets `HaloAp` into the base applicative `ParAff` for parallel effects.
+evalHaloAp :: forall props state action. HaloState props state action -> HaloAp props state action Aff ~> ParAff
+evalHaloAp hs (HaloAp halo) = foldFreeAp (parallel <<< evalHaloM hs) halo
 
 -- | Interprets `HaloF` into the base monad `Aff`, keeping track of state in `HaloState`.
 evalHaloF :: forall props state action. HaloState props state action -> HaloF props state action Aff ~> Aff
@@ -54,8 +57,8 @@ evalHaloF hs@(HaloState s) = case _ of
       canceller <- Map.lookup sid <$> Ref.read s.subscriptions
       sequence_ canceller
       pure a
-  Lift m -> liftAff m
-  Par (HaloAp p) -> sequential $ retractFreeAp $ hoistFreeAp (parallel <<< evalHaloM hs) p
+  Lift m -> m
+  Par p -> sequential (evalHaloAp hs p)
   Fork fh k ->
     liftEffect do
       fid <- State.fresh ForkId hs
