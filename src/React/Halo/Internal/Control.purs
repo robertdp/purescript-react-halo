@@ -11,7 +11,6 @@ import Control.Monad.Trans.Class (class MonadTrans, lift)
 import Control.Monad.Writer (class MonadTell, tell)
 import Control.Parallel (class Parallel)
 import Data.Bifunctor (lmap)
-import Data.Newtype (class Newtype, over)
 import Data.Tuple (Tuple)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
@@ -90,13 +89,13 @@ instance monadRecHaloM :: MonadRec (HaloM props state action m) where
           Done y -> pure y
 
 instance monadAskHaloM :: MonadAsk r m => MonadAsk r (HaloM props state action m) where
-  ask = HaloM $ liftF $ Lift ask
+  ask = lift ask
 
 instance monadTellHaloM :: MonadTell w m => MonadTell w (HaloM props state action m) where
-  tell = HaloM <<< liftF <<< Lift <<< tell
+  tell = lift <<< tell
 
 instance monadThrowHaloM :: MonadThrow e m => MonadThrow e (HaloM props state action m) where
-  throwError = HaloM <<< liftF <<< Lift <<< throwError
+  throwError = lift <<< throwError
 
 -- | The Halo parallel evaluation applicative. It lifts `HaloM` into a free applicative.
 -- |
@@ -107,8 +106,6 @@ instance monadThrowHaloM :: MonadThrow e m => MonadThrow e (HaloM props state ac
 -- | - `a` is the result type
 newtype HaloAp props state action m a
   = HaloAp (FreeAp (HaloM props state action m) a)
-
-derive instance newtypeHaloAp :: Newtype (HaloAp props state action m a) _
 
 derive newtype instance functorHaloAp :: Functor (HaloAp props state action m)
 
@@ -131,9 +128,13 @@ hoist nat (HaloM component) = HaloM (hoistFree go component)
     Subscribe event k -> Subscribe event k
     Unsubscribe sid a -> Unsubscribe sid a
     Lift m -> Lift (nat m)
-    Par par -> Par (over HaloAp (hoistFreeAp (hoist nat)) par)
+    Par par -> Par (hoistAp nat par)
     Fork m k -> Fork (hoist nat m) k
     Kill fid a -> Kill fid a
+
+-- | Hoist (transform) the base applicative of a `HaloAp` expression.
+hoistAp :: forall props state action m m'. Functor m => (m ~> m') -> HaloAp props state action m ~> HaloAp props state action m'
+hoistAp nat (HaloAp component) = HaloAp (hoistFreeAp (hoist nat) component)
 
 -- | Read the current props.
 props :: forall props m action state. HaloM props state action m props
