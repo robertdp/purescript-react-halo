@@ -11,7 +11,6 @@ import Control.Monad.Trans.Class (class MonadTrans, lift)
 import Control.Monad.Writer (class MonadTell, tell)
 import Control.Parallel (class Parallel)
 import Data.Bifunctor (lmap)
-import Data.Newtype (class Newtype, over)
 import Data.Tuple (Tuple)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
@@ -108,8 +107,6 @@ instance monadThrowHaloM :: MonadThrow e m => MonadThrow e (HaloM props state ac
 newtype HaloAp props state action m a
   = HaloAp (FreeAp (HaloM props state action m) a)
 
-derive instance newtypeHaloAp :: Newtype (HaloAp props state action m a) _
-
 derive newtype instance functorHaloAp :: Functor (HaloAp props state action m)
 
 derive newtype instance applyHaloAp :: Apply (HaloAp props state action m)
@@ -131,7 +128,7 @@ hoist nat (HaloM component) = HaloM (hoistFree go component)
     Subscribe event k -> Subscribe event k
     Unsubscribe sid a -> Unsubscribe sid a
     Lift m -> Lift (nat m)
-    Par par -> Par (over HaloAp (hoistFreeAp (hoist nat)) par)
+    Par par -> Par (hoistAp nat par)
     Fork m k -> Fork (hoist nat m) k
     Kill fid a -> Kill fid a
 
