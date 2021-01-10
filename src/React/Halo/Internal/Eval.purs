@@ -1,6 +1,7 @@
 module React.Halo.Internal.Eval where
 
 import Prelude
+import Control.Alt ((<|>))
 import Control.Applicative.Free (foldFreeAp)
 import Control.Monad.Free (foldFree)
 import Data.Either (either)
@@ -13,7 +14,7 @@ import Effect.Aff (Aff, ParAff, finally, parallel, sequential, throwError)
 import Effect.Aff as Aff
 import Effect.Class (liftEffect)
 import Effect.Ref as Ref
-import React.Halo.Internal.Control (HaloAp(..), HaloF(..), HaloM(..))
+import React.Halo.Internal.Control (HaloAp(..), HaloM(..), HaloParF(..), HaloF(..))
 import React.Halo.Internal.State (HaloState(..))
 import React.Halo.Internal.State as State
 import React.Halo.Internal.Types (ForkId(..), Lifecycle(..), SubscriptionId(..))
@@ -26,7 +27,7 @@ evalHaloM hs (HaloM halo) = foldFree (evalHaloF hs) halo
 
 -- | Interprets `HaloAp` into the base applicative `ParAff` for parallel effects.
 evalHaloAp :: forall props state action. HaloState props state action -> HaloAp props state action Aff ~> ParAff
-evalHaloAp hs (HaloAp halo) = foldFreeAp (parallel <<< evalHaloM hs) halo
+evalHaloAp hs (HaloAp halo) = foldFreeAp (evalHaloParF hs) halo
 
 -- | Interprets `HaloF` into the base monad `Aff`, keeping track of state in `HaloState`.
 evalHaloF :: forall props state action. HaloState props state action -> HaloF props state action Aff ~> Aff
@@ -78,6 +79,12 @@ evalHaloF hs@(HaloState s) = case _ of
     forks <- liftEffect (Ref.read s.forks)
     traverse_ (Aff.killFiber (Aff.error "Cancelled")) (Map.lookup fid forks)
     pure a
+
+-- | Interprets `HaloParF` into the base applicative `ParAff`, keeping track of state in `HaloState`.
+evalHaloParF :: forall props state action. HaloState props state action -> HaloParF props state action Aff ~> ParAff
+evalHaloParF hs@(HaloState s) = case _ of
+  Seq seq -> parallel $ evalHaloM hs seq
+  Alt a b -> evalHaloAp hs a <|> evalHaloAp hs b
 
 -- | A simpler interface for building the components eval function. The main lifecycle events map directly into
 -- | actions, so only the action handling logic needs to be written using `HaloM`.

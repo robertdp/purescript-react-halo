@@ -1,6 +1,7 @@
 module React.Halo.Internal.Control where
 
 import Prelude
+import Control.Alt (class Alt)
 import Control.Applicative.Free (FreeAp, hoistFreeAp, liftFreeAp)
 import Control.Monad.Error.Class (class MonadThrow, throwError)
 import Control.Monad.Free (Free, hoistFree, liftF)
@@ -9,7 +10,8 @@ import Control.Monad.Rec.Class (class MonadRec, Step(..), tailRecM)
 import Control.Monad.State (class MonadState)
 import Control.Monad.Trans.Class (class MonadTrans, lift)
 import Control.Monad.Writer (class MonadTell, tell)
-import Control.Parallel (class Parallel)
+import Control.Parallel (class Parallel, parallel)
+import Control.Plus (class Plus, empty)
 import Data.Bifunctor (lmap)
 import Data.Tuple (Tuple)
 import Effect.Aff.Class (class MonadAff, liftAff)
@@ -17,7 +19,7 @@ import Effect.Class (class MonadEffect, liftEffect)
 import React.Halo.Internal.Types (ForkId, SubscriptionId)
 import Wire.Event (Event)
 
--- | The Halo evaluation algebra
+-- | The Halo sequential evaluation algebra
 -- |
 -- | - `props` are the component props
 -- | - `state` is the component state
@@ -34,6 +36,17 @@ data HaloF props state action m a
   | Fork (HaloM props state action m Unit) (ForkId -> a)
   | Kill ForkId a
 
+-- | The Halo parallel evaluation algebra
+-- |
+-- | - `props` are the component props
+-- | - `state` is the component state
+-- | - `action` is the set of actions that the component handles
+-- | - `m` is the monad used during evaluation
+-- | - `a` is the result type
+data HaloParF props state action m a
+  = Seq (HaloM props state action m a)
+  | Alt (HaloAp props state action m a) (HaloAp props state action m a)
+
 instance functorHaloF :: Functor m => Functor (HaloF props state action m) where
   map f = case _ of
     Props k -> Props (f <<< k)
@@ -44,6 +57,11 @@ instance functorHaloF :: Functor m => Functor (HaloF props state action m) where
     Par par -> Par (map f par)
     Fork m k -> Fork m (map f k)
     Kill fid a -> Kill fid (f a)
+
+instance functorHaloParF :: Functor m => Functor (HaloParF props state action m) where
+  map f = case _ of
+    Seq seq -> Seq (map f seq)
+    Alt a b -> Alt (map f a) (map f b)
 
 -- | The Halo evaluation monad. It lifts the `HaloF` algebra into a free monad.
 -- |
@@ -105,7 +123,7 @@ instance monadThrowHaloM :: MonadThrow e m => MonadThrow e (HaloM props state ac
 -- | - `m` is the monad used during evaluation
 -- | - `a` is the result type
 newtype HaloAp props state action m a
-  = HaloAp (FreeAp (HaloM props state action m) a)
+  = HaloAp (FreeAp (HaloParF props state action m) a)
 
 derive newtype instance functorHaloAp :: Functor (HaloAp props state action m)
 
@@ -113,8 +131,16 @@ derive newtype instance applyHaloAp :: Apply (HaloAp props state action m)
 
 derive newtype instance applicativeHaloAp :: Applicative (HaloAp props state action m)
 
+-- | Races effects in parallel. Returns the first successful result or the first error if all fail with an exception.
+-- | Losing branches will be cancelled.
+instance altHaloAp :: Alt (HaloAp props state action m) where
+  alt a b = HaloAp (liftFreeAp (Alt a b))
+
+instance plusHaloAp :: (Monad m, Plus m) => Plus (HaloAp props state action m) where
+  empty = parallel (lift empty)
+
 instance parallelHaloM :: Parallel (HaloAp props state action m) (HaloM props state action m) where
-  parallel = HaloAp <<< liftFreeAp
+  parallel = HaloAp <<< liftFreeAp <<< Seq
   sequential = HaloM <<< liftF <<< Par
 
 -- | Hoist (transform) the base monad of a `HaloM` expression.
@@ -132,9 +158,14 @@ hoist nat (HaloM component) = HaloM (hoistFree go component)
     Fork m k -> Fork (hoist nat m) k
     Kill fid a -> Kill fid a
 
--- | Hoist (transform) the base applicative of a `HaloAp` expression.
+-- | Hoist (transform) the base monad of a `HaloAp` expression.
 hoistAp :: forall props state action m m'. Functor m => (m ~> m') -> HaloAp props state action m ~> HaloAp props state action m'
-hoistAp nat (HaloAp component) = HaloAp (hoistFreeAp (hoist nat) component)
+hoistAp nat (HaloAp component) = HaloAp (hoistFreeAp go component)
+  where
+  go :: HaloParF props state action m ~> HaloParF props state action m'
+  go = case _ of
+    Seq seq -> Seq (hoist nat seq)
+    Alt a b -> Alt (hoistAp nat a) (hoistAp nat b)
 
 -- | Read the current props.
 props :: forall props m action state. HaloM props state action m props
