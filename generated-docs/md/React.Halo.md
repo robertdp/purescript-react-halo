@@ -349,10 +349,10 @@ type EvalSpec props state action m = { onAction :: action -> HaloM props state a
 A simpler interface for building the components eval function. The main lifecycle events map directly into
 actions, so only the action handling logic needs to be written using `HaloM`.
 
-#### `makeEval`
+#### `mkEval`
 
 ``` purescript
-makeEval :: forall m action state props. (EvalSpec props state action m -> EvalSpec props state action m) -> Lifecycle props action -> HaloM props state action m Unit
+mkEval :: forall m action state props. (EvalSpec props state action m -> EvalSpec props state action m) -> Lifecycle props action -> HaloM props state action m Unit
 ```
 
 Given an `EvalSpec` builder, it will return an eval function.

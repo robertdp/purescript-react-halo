@@ -41,10 +41,10 @@ defaultEval :: forall props action state m. EvalSpec props state action m
 
 The empty `EvalSpec`.
 
-#### `makeEval`
+#### `mkEval`
 
 ``` purescript
-makeEval :: forall m action state props. (EvalSpec props state action m -> EvalSpec props state action m) -> Lifecycle props action -> HaloM props state action m Unit
+mkEval :: forall m action state props. (EvalSpec props state action m -> EvalSpec props state action m) -> Lifecycle props action -> HaloM props state action m Unit
 ```
 
 Given an `EvalSpec` builder, it will return an eval function.

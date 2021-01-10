@@ -17,5 +17,5 @@ import Effect.Class (liftEffect) as Class
 import React.Basic.Hooks (JSX) as React
 import React.Halo.Component (ComponentSpec, HookSpec, UseHalo, component, component_, useHalo) as Halo
 import React.Halo.Internal.Control (HaloAp, HaloM, fork, hoist, kill, props, subscribe, subscribe', unsubscribe) as Halo
-import React.Halo.Internal.Eval (EvalSpec, defaultEval, makeEval) as Halo
+import React.Halo.Internal.Eval (EvalSpec, defaultEval, mkEval) as Halo
 import React.Halo.Internal.Types (ForkId, Lifecycle(..), SubscriptionId) as Halo
