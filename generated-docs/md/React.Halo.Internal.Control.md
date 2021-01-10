@@ -79,7 +79,6 @@ The Halo parallel evaluation applicative. It lifts `HaloM` into a free applicati
 
 ##### Instances
 ``` purescript
-Newtype (HaloAp props state action m a) _
 Functor (HaloAp props state action m)
 Apply (HaloAp props state action m)
 Applicative (HaloAp props state action m)
@@ -93,6 +92,14 @@ hoist :: forall props state action m m'. Functor m => (m ~> m') -> (HaloM props 
 ```
 
 Hoist (transform) the base monad of a `HaloM` expression.
+
+#### `hoistAp`
+
+``` purescript
+hoistAp :: forall props state action m m'. Functor m => (m ~> m') -> (HaloAp props state action m) ~> (HaloAp props state action m')
+```
+
+Hoist (transform) the base applicative of a `HaloAp` expression.
 
 #### `props`
 

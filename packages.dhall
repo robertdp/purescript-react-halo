@@ -119,21 +119,16 @@ let additions =
 
 
 let upstream =
-      https://github.com/purescript/package-sets/releases/download/psc-0.13.8-20200822/packages.dhall sha256:b4f151f1af4c5cb6bf5437489f4231fbdd92792deaf32971e6bcb0047b3dd1f8
+      https://github.com/purescript/package-sets/releases/download/psc-0.13.8-20201223/packages.dhall sha256:a1a8b096175f841c4fef64c9b605fb0d691229241fd2233f6cf46e213de8a185
 
 let overrides = {=}
 
 let additions =
-  { wire =
-    { dependencies =
-      [ "aff"
-      , "filterable"
-      , "refs"
-      , "unsafe-reference"
-      ]
-    , repo = "https://github.com/robertdp/purescript-wire.git"
-    , version = "v0.5.0"
-    }
-  }
+      { wire =
+        { dependencies = [ "aff", "filterable", "refs", "unsafe-reference" ]
+        , repo = "https://github.com/robertdp/purescript-wire.git"
+        , version = "v0.5.0"
+        }
+      }
 
 in  upstream // overrides // additions
