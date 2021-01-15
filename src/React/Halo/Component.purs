@@ -6,7 +6,7 @@ import Data.Tuple.Nested (type (/\), (/\))
 import Effect (Effect)
 import Effect.Aff (Aff)
 import Effect.Unsafe (unsafePerformEffect)
-import React.Basic.Hooks (JSX, UseEffect, UseMemo, UseState, Hook)
+import React.Basic.Hooks (Hook, JSX, UseEffect, UseMemo, UseState, Component)
 import React.Basic.Hooks as React
 import React.Halo.Internal.Control (HaloM)
 import React.Halo.Internal.Eval (handleAction, handleUpdate, runFinalize, runInitialize)
@@ -50,7 +50,7 @@ type ComponentSpec props state action m
     }
 
 -- | Build a component by providing a name and Halo component spec.
-component :: forall state action props. String -> ComponentSpec props state action Aff -> Effect (props -> JSX)
+component :: forall state action props. String -> ComponentSpec props state action Aff -> Component props
 component name { initialState, eval, render } =
   React.component name \props -> React.do
     state /\ send <- useHalo { props, initialState, eval }
