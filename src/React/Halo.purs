@@ -18,4 +18,4 @@ import React.Basic.Hooks (Component, JSX) as React
 import React.Halo.Component (ComponentSpec, HookSpec, UseHalo, component, component_, useHalo) as Halo
 import React.Halo.Internal.Control (HaloAp, HaloM, fork, hoist, hoistAp, kill, props, subscribe, subscribe', unsubscribe) as Halo
 import React.Halo.Internal.Eval (EvalSpec, defaultEval, mkEval) as Halo
-import React.Halo.Internal.Types (ForkId, Lifecycle(..), SubscriptionId) as Halo
+import React.Halo.Internal.Types (Event, ForkId, Lifecycle(..), SubscriptionId) as Halo
