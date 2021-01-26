@@ -15,7 +15,7 @@ Update the additions in your `packages.dhall`:
 ```dhall
 let additions =
   { react-halo =
-    { dependencies = [ "aff", "free", "freeap", "react-basic-hooks", "refs", "wire" ]
+    { dependencies = [ "aff", "free", "freeap", "react-basic-hooks", "refs" ]
     , repo = "https://github.com/robertdp/purescript-react-halo.git"
     , version = "v1.1.0"
     }
@@ -87,8 +87,6 @@ subscribe :: forall props state action m. Event action -> HaloM props state acti
 
 unsubscribe :: forall m action state props. SubscriptionId -> HaloM props state action m Unit
 ```
-
-`Event` comes from the [Wire](https://github.com/robertdp/purescript-wire) library.
 
 There is also a version for subscriptions that want to unsubscribe themselves:
 
