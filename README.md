@@ -15,7 +15,7 @@ Update the additions in your `packages.dhall`:
 ```dhall
 let additions =
   { react-halo =
-    { dependencies = [ "aff", "free", "freeap", "react-basic-hooks", "refs" ]
+    { dependencies = [ "aff", "event", "free", "freeap", "react-basic-hooks", "refs" ]
     , repo = "https://github.com/robertdp/purescript-react-halo.git"
     , version = "v1.2.0"
     }
