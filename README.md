@@ -17,7 +17,7 @@ let additions =
   { react-halo =
     { dependencies = [ "aff", "free", "freeap", "react-basic-hooks", "refs" ]
     , repo = "https://github.com/robertdp/purescript-react-halo.git"
-    , version = "v1.1.0"
+    , version = "v1.2.0"
     }
   }
 ```
@@ -81,17 +81,17 @@ fireOnChange value = do
 Subscriptions registered using these functions are automatically tracked by Halo.
 
 ```purescript
-type Event a = (a -> Effect Unit) -> Effect (Effect Unit)
-
-subscribe :: forall props state action m. Event action -> HaloM props state action m SubscriptionId
+subscribe :: forall props state action m. FRP.Event action -> HaloM props state action m SubscriptionId
 
 unsubscribe :: forall m action state props. SubscriptionId -> HaloM props state action m Unit
 ```
 
+`FRP.Event` is from the `purescript-event` library.
+
 There is also a version for subscriptions that want to unsubscribe themselves:
 
 ```purescript
-subscribe' :: forall m action state props. (SubscriptionId -> Event action) -> HaloM props state action m SubscriptionId
+subscribe' :: forall m action state props. (SubscriptionId -> FRP.Event action) -> HaloM props state action m SubscriptionId
 ```
 
 Any subscriptions that remain when the component is unmounted are automatically unsubscribed. This prevents requiring manual clean up in the `Finalize` lifecycle event. Also note that new subscriptions will not be created once the `Finalize` event has been fired.

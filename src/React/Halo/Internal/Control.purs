@@ -14,7 +14,8 @@ import Data.Bifunctor (lmap)
 import Data.Tuple (Tuple)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
-import React.Halo.Internal.Types (Event, ForkId, SubscriptionId)
+import FRP.Event (Event)
+import React.Halo.Internal.Types (ForkId, SubscriptionId)
 
 -- | The Halo evaluation algebra
 -- |

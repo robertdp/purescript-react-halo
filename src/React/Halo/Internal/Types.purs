@@ -1,7 +1,6 @@
 module React.Halo.Internal.Types where
 
 import Prelude
-import Effect (Effect)
 
 -- | The Halo lifecycle events.
 -- |
@@ -15,9 +14,6 @@ data Lifecycle props action
   | Update props props
   | Action action
   | Finalize
-
-type Event a
-  = (a -> Effect Unit) -> Effect (Effect Unit)
 
 newtype SubscriptionId
   = SubscriptionId Int
