@@ -18,7 +18,6 @@ import React.Halo.Internal.State (HaloState(..))
 import React.Halo.Internal.State as State
 import React.Halo.Internal.Types (ForkId(..), Lifecycle(..), SubscriptionId(..))
 import Unsafe.Reference (unsafeRefEq)
-import Wire.Event as Event
 
 -- | Interprets `HaloM` into the base monad `Aff` for asynchronous effects.
 evalHaloM :: forall props state action. HaloState props state action -> HaloM props state action Aff ~> Aff
@@ -49,7 +48,7 @@ evalHaloF hs@(HaloState s) = case _ of
     liftEffect do
       sid <- State.fresh SubscriptionId hs
       unlessM (Ref.read s.finalized) do
-        canceller <- Event.subscribe (sub sid) (handleAction hs)
+        canceller <- sub sid (handleAction hs)
         Ref.modify_ (Map.insert sid canceller) s.subscriptions
       pure (k sid)
   Unsubscribe sid a ->
