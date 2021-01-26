@@ -19,11 +19,6 @@ let additions =
     , repo = "https://github.com/robertdp/purescript-react-halo.git"
     , version = "v1.0.0"
     }
-  , wire =
-    { dependencies = [ "aff", "filterable", "refs", "unsafe-reference" ]
-    , repo = "https://github.com/robertdp/purescript-wire.git"
-    , version = "v0.5.0"
-    }
   }
 ```
 
@@ -86,6 +81,8 @@ fireOnChange value = do
 Subscriptions registered using these functions are automatically tracked by Halo.
 
 ```purescript
+type Event a = (a -> Effect Unit) -> Effect (Effect Unit)
+
 subscribe :: forall props state action m. Event action -> HaloM props state action m SubscriptionId
 
 unsubscribe :: forall m action state props. SubscriptionId -> HaloM props state action m Unit
