@@ -15,7 +15,7 @@
     ],
     "dependencies": {
         "purescript-aff": "^v5.1.2",
-        "purescript-event": "^v1.2.4",
+        "purescript-event": "^v1.3.0",
         "purescript-free": "^v5.2.0",
         "purescript-freeap": "^v5.0.1",
         "purescript-react-basic-hooks": "^v6.2.0",
