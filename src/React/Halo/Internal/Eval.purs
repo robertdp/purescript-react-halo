@@ -13,6 +13,7 @@ import Effect.Aff (Aff, ParAff, finally, parallel, sequential, throwError)
 import Effect.Aff as Aff
 import Effect.Class (liftEffect)
 import Effect.Ref as Ref
+import FRP.Event as Event
 import React.Halo.Internal.Control (HaloAp(..), HaloF(..), HaloM(..))
 import React.Halo.Internal.State (HaloState(..))
 import React.Halo.Internal.State as State
@@ -48,7 +49,7 @@ evalHaloF hs@(HaloState s) = case _ of
     liftEffect do
       sid <- State.fresh SubscriptionId hs
       unlessM (Ref.read s.finalized) do
-        canceller <- sub sid (handleAction hs)
+        canceller <- Event.subscribe (sub sid) (handleAction hs)
         Ref.modify_ (Map.insert sid canceller) s.subscriptions
       pure (k sid)
   Unsubscribe sid a ->
