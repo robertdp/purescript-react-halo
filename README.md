@@ -60,7 +60,9 @@ hoistReaderT ::
   forall props state action env m.
   HaloM props state action (ReaderT env m) ~>
   ReaderT env (HaloM props state action m)
-hoistReaderT x = ReaderT \env -> Halo.hoist (flip runReaderT env) x
+hoistReaderT x = do
+  env <- ask
+  lift (Halo.hoist (flip runReaderT env) x)
 ```
 
 ### Working with props
