@@ -31,7 +31,7 @@ Then install with Spago:
 Whether you are using the hook or one of the component helpers, the main feature that Halo provides is the `eval` function. It looks like:
 
 ```purescript
-Lifecycle props action -> HaloM props state action m a
+Lifecycle props action -> HaloM props state action m Unit
 ```
 
 where `Lifecycle` is:
@@ -55,7 +55,12 @@ hoist :: forall props state action m m'. Functor m => (m ~> m') -> HaloM props s
 Example:
 
 ```purescript
-invertReaderT x = ReaderT \env -> Halo.hoist (flip runReaderT env) x
+-- Inverting a reader
+hoistReaderT ::
+  forall props state action env m.
+  HaloM props state action (ReaderT env m) ~>
+  ReaderT env (HaloM props state action m)
+hoistReaderT x = ReaderT \env -> Halo.hoist (flip runReaderT env) x
 ```
 
 ### Working with props
@@ -67,9 +72,14 @@ props :: forall props action state m. HaloM props state action m props
 Example:
 
 ```purescript
-fireOnChange value = do
+fireOnChange ::
+  forall props state action m a.
+  MonadEffect m =>
+  HaloM { onChange :: a -> Effect Unit | props } { value :: a | state } action m Unit
+fireOnChange = do
   { onChange } <- Halo.props
-  onChange value
+  { value } <- Halo.get
+  liftEffect (onChange value)
 ```
 
 ### Working with state
