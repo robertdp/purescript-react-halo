@@ -2,7 +2,7 @@
 
 Halo is a [Halogen](https://github.com/purescript-halogen/purescript-halogen)-inspired interface for React.
 
-It is available as a hook: `useHalo`; for building entire components there is: `component` and `component_`.
+It is available as a hook: `useHalo`; for building entire components there is `component`.
 
 ## Documentation
 
@@ -15,9 +15,9 @@ Update the additions in your `packages.dhall`:
 ```dhall
 let additions =
   { react-halo =
-    { dependencies = [ "aff", "event", "free", "freeap", "react-basic-hooks", "refs" ]
+    { dependencies = [ "aff", "event", "free", "freeap", "react-basic-hooks", "refs", "unsafe-reference" ]
     , repo = "https://github.com/robertdp/purescript-react-halo.git"
-    , version = "v1.2.0"
+    , version = "v1.2.1"
     }
   }
 ```

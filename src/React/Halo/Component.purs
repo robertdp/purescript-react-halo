@@ -55,7 +55,3 @@ component name { initialState, eval, render } =
   React.component name \props -> React.do
     state /\ send <- useHalo { props, initialState, eval }
     pure (render { props, state, send })
-
--- | Build a propless component by providing a name and Halo component spec.
-component_ :: forall state action. String -> ComponentSpec Unit state action Aff -> Effect JSX
-component_ name spec = flap (component name spec) unit
