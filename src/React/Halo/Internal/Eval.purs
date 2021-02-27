@@ -100,13 +100,16 @@ defaultEval =
 -- | Given an `EvalSpec` builder, it will return an eval function.
 mkEval ::
   forall m action state props.
-  EvalSpec props state action m ->
-  Lifecycle props action -> HaloM props state action m Unit
-mkEval spec = case _ of
-  Initialize props -> traverse_ spec.onAction $ spec.onInitialize props
-  Update old new -> traverse_ spec.onAction $ spec.onUpdate old new
-  Action action -> spec.onAction action
-  Finalize -> traverse_ spec.onAction spec.onFinalize
+  (EvalSpec props state action m -> EvalSpec props state action m) ->
+  Lifecycle props action ->
+  HaloM props state action m Unit
+mkEval f = case _ of
+  Initialize props -> traverse_ eval.onAction $ eval.onInitialize props
+  Update old new -> traverse_ eval.onAction $ eval.onUpdate old new
+  Action action -> eval.onAction action
+  Finalize -> traverse_ eval.onAction eval.onFinalize
+  where
+  eval = f defaultEval
 
 -- | Simple way to run Aff logic asynchronously, while bringing errors back into Effect.
 runAff :: Aff Unit -> Effect Unit
