@@ -6,7 +6,7 @@ import Data.Tuple.Nested (type (/\), (/\))
 import Effect (Effect)
 import Effect.Aff (Aff)
 import Effect.Unsafe (unsafePerformEffect)
-import React.Basic.Hooks (Hook, JSX, UseEffect, UseMemo, UseState, Component)
+import React.Basic.Hooks (Component, Hook, JSX, Render, UseEffect, UseMemo, UseState)
 import React.Basic.Hooks as React
 import React.Halo.Internal.Control (HaloM)
 import React.Halo.Internal.Eval (handleAction, handleUpdate, runFinalize, runInitialize)
@@ -33,25 +33,29 @@ useHalo ::
 useHalo { props, initialState, eval } =
   React.coerceHook React.do
     state /\ setState <- React.useState' initialState
-    halo <- React.useMemo unit \_ -> unsafePerformEffect (createInitialState { props, state: initialState, eval, update: setState })
+    halo <-
+      React.useMemo unit \_ ->
+        unsafePerformEffect do
+          createInitialState { props, state: initialState, eval, update: setState }
     React.useEffectOnce (runInitialize halo *> pure (runFinalize halo))
     React.useEffectAlways (handleUpdate halo props *> mempty)
     pure (state /\ handleAction halo)
 
 type ComponentSpec props state action m
-  = { initialState :: state
+  = { initialState :: props -> state
     , eval :: Lifecycle props action -> HaloM props state action m Unit
     , render ::
         { props :: props
         , state :: state
         , send :: action -> Effect Unit
         } ->
-        JSX
+        (forall hooks newHooks. Render hooks newHooks JSX)
     }
 
--- | Build a component by providing a name and Halo component spec.
+-- | Build a component by providing a name and a Halo component spec.
 component :: forall state action props. String -> ComponentSpec props state action Aff -> Component props
-component name { initialState, eval, render } =
+component name spec@{ eval, render } =
   React.component name \props -> React.do
+    initialState <- React.useMemo unit \_ -> spec.initialState props
     state /\ send <- useHalo { props, initialState, eval }
-    pure (render { props, state, send })
+    render { props, state, send }
