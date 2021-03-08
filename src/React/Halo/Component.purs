@@ -13,49 +13,57 @@ import React.Halo.Internal.Eval (handleAction, handleUpdate, runFinalize, runIni
 import React.Halo.Internal.State (HaloState, createInitialState)
 import React.Halo.Internal.Types (Lifecycle)
 
-type HookSpec props state action m
+type HookSpec props context state action m
   = { props :: props
+    , context :: context
     , initialState :: state
-    , eval :: Lifecycle props action -> HaloM props state action m Unit
+    , eval :: Lifecycle props context action -> HaloM props context state action m Unit
     }
 
-newtype UseHalo props state action hooks
-  = UseHalo (UseEffect Unit (UseEffect Unit (UseMemo Unit (HaloState props state action) (UseState state hooks))))
+newtype UseHalo props context state action hooks
+  = UseHalo (UseEffect Unit (UseEffect Unit (UseMemo Unit (HaloState props context state action) (UseState state hooks))))
 
-derive instance newtypeUseHalo :: Newtype (UseHalo props state action hooks) _
+derive instance newtypeUseHalo :: Newtype (UseHalo props context state action hooks) _
 
 -- | Run renderless Halo in the current component. This allows Halo to be used with other hooks and other ways of
 -- | building components.
 useHalo ::
-  forall state action props.
-  HookSpec props state action Aff ->
-  Hook (UseHalo props state action) (state /\ (action -> Effect Unit))
-useHalo { props, initialState, eval } =
+  forall props context state action.
+  HookSpec props context state action Aff ->
+  Hook (UseHalo props context state action) (state /\ (action -> Effect Unit))
+useHalo { props, context, initialState, eval } =
   React.coerceHook React.do
     state /\ setState <- React.useState' initialState
     halo <-
       React.useMemo unit \_ ->
         unsafePerformEffect do
-          createInitialState { props, state: initialState, eval, update: setState }
+          createInitialState { props, context, state: initialState, eval, update: setState }
     React.useEffectOnce (runInitialize halo *> pure (runFinalize halo))
-    React.useEffectAlways (handleUpdate halo props *> mempty)
+    React.useEffectAlways (handleUpdate halo props context *> mempty)
     pure (state /\ handleAction halo)
 
-type ComponentSpec props state action m
-  = { initialState :: props -> state
-    , eval :: Lifecycle props action -> HaloM props state action m Unit
+type ComponentSpec props context state action m
+  = { hooks :: forall hooks. Render Unit hooks context
+    , initialState :: props -> context -> state
+    , eval :: Lifecycle props context action -> HaloM props context state action m Unit
     , render ::
         { props :: props
+        , context :: context
         , state :: state
         , send :: action -> Effect Unit
         } ->
-        (forall hooks newHooks. Render hooks newHooks JSX)
+        JSX
     }
 
 -- | Build a component by providing a name and a Halo component spec.
-component :: forall state action props. String -> ComponentSpec props state action Aff -> Component props
+component ::
+  forall props context state action.
+  String ->
+  ComponentSpec props context state action Aff ->
+  Component props
 component name spec@{ eval, render } =
   React.component name \props -> React.do
-    initialState <- React.useMemo unit \_ -> spec.initialState props
-    state /\ send <- useHalo { props, initialState, eval }
-    render { props, state, send }
+    context <- spec.hooks
+    initialState <- React.useMemo unit \_ -> spec.initialState props context
+    state /\ send <- useHalo { props, context, initialState, eval }
+    pure (render { props, context, state, send })

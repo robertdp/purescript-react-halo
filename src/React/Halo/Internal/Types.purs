@@ -1,6 +1,7 @@
 module React.Halo.Internal.Types where
 
 import Prelude
+import Data.Tuple (Tuple)
 
 -- | The Halo lifecycle events.
 -- |
@@ -9,9 +10,9 @@ import Prelude
 -- | - `Action` contains the dispatched action. It occurs each time an action is dispatched to be eval'd, up until the
 -- |   `Finalize` event
 -- | - `Finalize` occurs when the component unmounts.
-data Lifecycle props action
-  = Initialize props
-  | Update props props
+data Lifecycle props context action
+  = Initialize props context
+  | Update (Tuple props props) (Tuple context context)
   | Action action
   | Finalize
 
