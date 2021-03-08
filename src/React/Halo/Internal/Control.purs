@@ -19,24 +19,24 @@ import React.Halo.Internal.Types (ForkId, SubscriptionId)
 
 -- | The Halo evaluation algebra
 -- |
--- | - `props` are the component props
+-- | - `ctx` is some component context
 -- | - `state` is the component state
 -- | - `action` is the set of actions that the component handles
 -- | - `m` is the monad used during evaluation
 -- | - `a` is the result type
-data HaloF props state action m a
-  = Props (props -> a)
+data HaloF ctx state action (m :: Type -> Type) a
+  = Context (ctx -> a)
   | State (state -> Tuple a state)
   | Subscribe (SubscriptionId -> Event action) (SubscriptionId -> a)
   | Unsubscribe SubscriptionId a
   | Lift (m a)
-  | Par (HaloAp props state action m a)
-  | Fork (HaloM props state action m Unit) (ForkId -> a)
+  | Par (HaloAp ctx state action m a)
+  | Fork (HaloM ctx state action m Unit) (ForkId -> a)
   | Kill ForkId a
 
-instance functorHaloF :: Functor m => Functor (HaloF props state action m) where
+instance functorHaloF :: Functor m => Functor (HaloF ctx state action m) where
   map f = case _ of
-    Props k -> Props (f <<< k)
+    Context k -> Context (f <<< k)
     State k -> State (lmap f <<< k)
     Subscribe fes k -> Subscribe fes (map f k)
     Unsubscribe sid a -> Unsubscribe sid (f a)
@@ -47,83 +47,83 @@ instance functorHaloF :: Functor m => Functor (HaloF props state action m) where
 
 -- | The Halo evaluation monad. It lifts the `HaloF` algebra into a free monad.
 -- |
--- | - `props` are the component props
+-- | - `ctx` is some component context
 -- | - `state` is the component state
 -- | - `action` is the set of actions that the component handles
 -- | - `m` is the monad used during evaluation
 -- | - `a` is the result type
-newtype HaloM props state action m a
-  = HaloM (Free (HaloF props state action m) a)
+newtype HaloM ctx state action (m :: Type -> Type) a
+  = HaloM (Free (HaloF ctx state action m) a)
 
-derive newtype instance functorHaloM :: Functor (HaloM props state action m)
+derive newtype instance functorHaloM :: Functor (HaloM ctx state action m)
 
-derive newtype instance applyHaloM :: Apply (HaloM props state action m)
+derive newtype instance applyHaloM :: Apply (HaloM ctx state action m)
 
-derive newtype instance applicativeHaloM :: Applicative (HaloM props state action m)
+derive newtype instance applicativeHaloM :: Applicative (HaloM ctx state action m)
 
-derive newtype instance bindHaloM :: Bind (HaloM props state action m)
+derive newtype instance bindHaloM :: Bind (HaloM ctx state action m)
 
-derive newtype instance monadHaloM :: Monad (HaloM props state action m)
+derive newtype instance monadHaloM :: Monad (HaloM ctx state action m)
 
-derive newtype instance semigroupHaloM :: Semigroup a => Semigroup (HaloM props state action m a)
+derive newtype instance semigroupHaloM :: Semigroup a => Semigroup (HaloM ctx state action m a)
 
-derive newtype instance monoidHaloM :: Monoid a => Monoid (HaloM props state action m a)
+derive newtype instance monoidHaloM :: Monoid a => Monoid (HaloM ctx state action m a)
 
-instance monadTransHaloM :: MonadTrans (HaloM props state action) where
+instance monadTransHaloM :: MonadTrans (HaloM ctx state action) where
   lift = HaloM <<< liftF <<< Lift
 
-instance monadEffectHaloM :: MonadEffect m => MonadEffect (HaloM props state action m) where
+instance monadEffectHaloM :: MonadEffect m => MonadEffect (HaloM ctx state action m) where
   liftEffect = lift <<< liftEffect
 
-instance monadAffHaloM :: MonadAff m => MonadAff (HaloM props state action m) where
+instance monadAffHaloM :: MonadAff m => MonadAff (HaloM ctx state action m) where
   liftAff = lift <<< liftAff
 
-instance monadStateHaloM :: MonadState state (HaloM props state action m) where
+instance monadStateHaloM :: MonadState state (HaloM ctx state action m) where
   state = HaloM <<< liftF <<< State
 
-instance monadRecHaloM :: MonadRec (HaloM props state action m) where
+instance monadRecHaloM :: MonadRec (HaloM ctx state action m) where
   tailRecM k a =
     k a
       >>= case _ of
           Loop x -> tailRecM k x
           Done y -> pure y
 
-instance monadAskHaloM :: MonadAsk r m => MonadAsk r (HaloM props state action m) where
+instance monadAskHaloM :: MonadAsk r m => MonadAsk r (HaloM ctx state action m) where
   ask = lift ask
 
-instance monadTellHaloM :: MonadTell w m => MonadTell w (HaloM props state action m) where
+instance monadTellHaloM :: MonadTell w m => MonadTell w (HaloM ctx state action m) where
   tell = lift <<< tell
 
-instance monadThrowHaloM :: MonadThrow e m => MonadThrow e (HaloM props state action m) where
+instance monadThrowHaloM :: MonadThrow e m => MonadThrow e (HaloM ctx state action m) where
   throwError = lift <<< throwError
 
 -- | The Halo parallel evaluation applicative. It lifts `HaloM` into a free applicative.
 -- |
--- | - `props` are the component props
+-- | - `ctx` is some component context
 -- | - `state` is the component state
 -- | - `action` is the set of actions that the component handles
 -- | - `m` is the monad used during evaluation
 -- | - `a` is the result type
-newtype HaloAp props state action m a
-  = HaloAp (FreeAp (HaloM props state action m) a)
+newtype HaloAp ctx state action (m :: Type -> Type) a
+  = HaloAp (FreeAp (HaloM ctx state action m) a)
 
-derive newtype instance functorHaloAp :: Functor (HaloAp props state action m)
+derive newtype instance functorHaloAp :: Functor (HaloAp ctx state action m)
 
-derive newtype instance applyHaloAp :: Apply (HaloAp props state action m)
+derive newtype instance applyHaloAp :: Apply (HaloAp ctx state action m)
 
-derive newtype instance applicativeHaloAp :: Applicative (HaloAp props state action m)
+derive newtype instance applicativeHaloAp :: Applicative (HaloAp ctx state action m)
 
-instance parallelHaloM :: Parallel (HaloAp props state action m) (HaloM props state action m) where
+instance parallelHaloM :: Parallel (HaloAp ctx state action m) (HaloM ctx state action m) where
   parallel = HaloAp <<< liftFreeAp
   sequential = HaloM <<< liftF <<< Par
 
 -- | Hoist (transform) the base monad of a `HaloM` expression.
-hoist :: forall props state action m m'. Functor m => (m ~> m') -> HaloM props state action m ~> HaloM props state action m'
+hoist :: forall ctx state action m m'. Functor m => (m ~> m') -> HaloM ctx state action m ~> HaloM ctx state action m'
 hoist nat (HaloM component) = HaloM (hoistFree go component)
   where
-  go :: HaloF props state action m ~> HaloF props state action m'
+  go :: HaloF ctx state action m ~> HaloF ctx state action m'
   go = case _ of
-    Props k -> Props k
+    Context k -> Context k
     State k -> State k
     Subscribe event k -> Subscribe event k
     Unsubscribe sid a -> Unsubscribe sid a
@@ -133,27 +133,27 @@ hoist nat (HaloM component) = HaloM (hoistFree go component)
     Kill fid a -> Kill fid a
 
 -- | Hoist (transform) the base applicative of a `HaloAp` expression.
-hoistAp :: forall props state action m m'. Functor m => (m ~> m') -> HaloAp props state action m ~> HaloAp props state action m'
+hoistAp :: forall ctx state action m m'. Functor m => (m ~> m') -> HaloAp ctx state action m ~> HaloAp ctx state action m'
 hoistAp nat (HaloAp component) = HaloAp (hoistFreeAp (hoist nat) component)
 
--- | Read the current props.
-props :: forall props m action state. HaloM props state action m props
-props = HaloM (liftF (Props identity))
+-- | Read the current ctx.
+context :: forall ctx state action m. HaloM ctx state action m ctx
+context = HaloM (liftF (Context identity))
 
 -- | Subscribe to new actions from an `Event`. Subscriptions will be automatically cancelled when the component
 -- | unmounts.
 -- |
 -- | Returns a `SubscriptionId` which can be used with `unsubscribe` to manually cancel a subscription.
-subscribe :: forall props state action m. Event action -> HaloM props state action m SubscriptionId
+subscribe :: forall ctx state action m. Event action -> HaloM ctx state action m SubscriptionId
 subscribe = subscribe' <<< const
 
 -- | Same as `subscribe` but the event-producing logic is also passed the `SuscriptionId`. This is useful when events
 -- | need to unsubscribe themselves.
-subscribe' :: forall m action state props. (SubscriptionId -> Event action) -> HaloM props state action m SubscriptionId
+subscribe' :: forall ctx state action m. (SubscriptionId -> Event action) -> HaloM ctx state action m SubscriptionId
 subscribe' event = HaloM (liftF (Subscribe event identity))
 
 -- | Cancels the event subscription belonging to the `SubscriptionId`.
-unsubscribe :: forall m action state props. SubscriptionId -> HaloM props state action m Unit
+unsubscribe :: forall ctx state action m. SubscriptionId -> HaloM ctx state action m Unit
 unsubscribe sid = HaloM (liftF (Unsubscribe sid unit))
 
 -- | Start a `HaloM` process running independantly from the current "thread". Forks are tracked automatically and
@@ -161,9 +161,9 @@ unsubscribe sid = HaloM (liftF (Unsubscribe sid unit))
 -- | `Finalize` event, but once evaluation ends there will be no way of killing them.
 -- |
 -- | Returns a `ForkId` for the new process.
-fork :: forall m action state props. HaloM props state action m Unit -> HaloM props state action m ForkId
+fork :: forall ctx state action m. HaloM ctx state action m Unit -> HaloM ctx state action m ForkId
 fork m = HaloM (liftF (Fork m identity))
 
 -- | Kills the process belonging to the `ForkId`.
-kill :: forall m action state props. ForkId -> HaloM props state action m Unit
+kill :: forall ctx state action m. ForkId -> HaloM ctx state action m Unit
 kill fid = HaloM (liftF (Kill fid unit))
