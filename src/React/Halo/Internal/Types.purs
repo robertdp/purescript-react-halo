@@ -9,9 +9,9 @@ import Prelude
 -- | - `Action` contains the dispatched action. It occurs each time an action is dispatched to be eval'd, up until the
 -- |   `Finalize` event
 -- | - `Finalize` occurs when the component unmounts.
-data Lifecycle ctx action
-  = Initialize ctx
-  | Update ctx ctx
+data Lifecycle props ctx action
+  = Initialize props ctx
+  | Update { props :: props, context :: ctx } { props :: props, context :: ctx }
   | Action action
   | Finalize
 

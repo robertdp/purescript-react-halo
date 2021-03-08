@@ -1,12 +1,13 @@
 module Test.Main where
 
 import Prelude
+import Control.Monad.State (modify_, put)
 import Data.Maybe (Maybe(..))
 import Effect (Effect)
-import Effect.Aff (Milliseconds(..), delay, launchAff_)
+import Effect.Aff (Milliseconds(..), delay, launchAff_, parallel, sequential)
+import Effect.Aff.Class (liftAff)
 import Effect.Class (liftEffect)
 import Effect.Ref as Ref
-import React.Halo (liftAff)
 import React.Halo as Halo
 import React.Halo.Internal.Eval as Eval
 import React.Halo.Internal.State as State
@@ -34,11 +35,11 @@ runContextTests = do
       expect 0
     it "does not fire when props are referentially equal" do
       { state, initialProps, expect } <- makeUpdateState
-      liftEffect $ Eval.handleUpdate state initialProps
+      liftEffect $ Eval.handleUpdate state initialProps unit
       expect 0
     it "does fire when props are not referentially equal" do
       { state, expect } <- makeUpdateState
-      liftEffect $ Eval.handleUpdate state { value: "new object" }
+      liftEffect $ Eval.handleUpdate state { value: "new object" } unit
       expect 1
   where
   makeUpdateState =
@@ -52,7 +53,7 @@ runContextTests = do
         initialProps = { value: "" }
 
         expect x = liftEffect (Ref.read count) >>= shouldEqual x
-      state <- State.createInitialState { context: initialProps, state: unit, eval, update: mempty }
+      state <- State.createInitialState { props: initialProps, context: unit, state: unit, eval, update: mempty }
       Eval.runInitialize state
       pure { state, initialProps, expect }
 
@@ -86,9 +87,9 @@ runStateTests = do
         expect x = liftEffect (Ref.read count) >>= shouldEqual x
 
         eval = case _ of
-          Halo.Action f -> Halo.modify_ f
+          Halo.Action f -> modify_ f
           _ -> pure unit
-      state <- State.createInitialState { context: unit, state: initialState, eval, update }
+      state <- State.createInitialState { props: unit, context: unit, state: initialState, eval, update }
       Eval.runInitialize state
       let
         modify = liftEffect <<< Eval.handleAction state
@@ -105,23 +106,24 @@ runParallelismTests = do
         internalState <- Ref.new Nothing
         state <-
           State.createInitialState
-            { context: unit
+            { props: unit
+            , context: unit
             , state: 0
             , update: \x -> Ref.write (Just x) internalState
             , eval:
                 \_ -> do
                   c <-
-                    Halo.sequential ado
+                    sequential ado
                       a <-
-                        Halo.parallel do
+                        parallel do
                           liftAff $ delay $ Milliseconds 1_000.0
                           pure 1
                       b <-
-                        Halo.parallel do
+                        parallel do
                           liftAff $ delay $ Milliseconds 1_000.0
                           pure 2
                       in a + b
-                  Halo.put c
+                  put c
             }
         Eval.runInitialize state
         pure internalState
