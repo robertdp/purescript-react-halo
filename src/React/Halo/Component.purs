@@ -41,8 +41,8 @@ useHalo { context, initialState, eval } =
     React.useEffectAlways (handleUpdate halo context *> mempty)
     pure (state /\ handleAction halo)
 
-type ComponentSpec props ctx state action m
-  = { hooks :: props -> forall hooks. Render Unit hooks ctx
+type ComponentSpec props hooks ctx state action m
+  = { hooks :: props -> Render Unit hooks ctx
     , initialState :: props -> ctx -> state
     , eval :: Lifecycle ctx action -> HaloM ctx state action m Unit
     , render ::
@@ -56,9 +56,9 @@ type ComponentSpec props ctx state action m
 
 -- | Build a component by providing a name and a Halo component spec.
 component ::
-  forall props ctx state action.
+  forall props hooks ctx state action.
   String ->
-  ComponentSpec props ctx state action Aff ->
+  ComponentSpec props hooks ctx state action Aff ->
   Component props
 component name spec@{ eval, render } =
   React.component name \props -> React.do
