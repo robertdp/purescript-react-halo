@@ -19,6 +19,7 @@ import React.Halo.Internal.Types (ForkId, SubscriptionId)
 
 -- | The Halo evaluation algebra
 -- |
+-- | - `props` are the component props
 -- | - `ctx` is some component context
 -- | - `state` is the component state
 -- | - `action` is the set of actions that the component handles
@@ -49,6 +50,7 @@ instance functorHaloF :: Functor m => Functor (HaloF props ctx state action m) w
 
 -- | The Halo evaluation monad. It lifts the `HaloF` algebra into a free monad.
 -- |
+-- | - `props` are the component props
 -- | - `ctx` is some component context
 -- | - `state` is the component state
 -- | - `action` is the set of actions that the component handles
@@ -101,6 +103,7 @@ instance monadThrowHaloM :: MonadThrow e m => MonadThrow e (HaloM props ctx stat
 
 -- | The Halo parallel evaluation applicative. It lifts `HaloM` into a free applicative.
 -- |
+-- | - `props` are the component props
 -- | - `ctx` is some component context
 -- | - `state` is the component state
 -- | - `action` is the set of actions that the component handles
@@ -143,7 +146,7 @@ hoistAp nat (HaloAp component) = HaloAp (hoistFreeAp (hoist nat) component)
 props :: forall props ctx state action m. HaloM props ctx state action m props
 props = HaloM (liftF (Props identity))
 
--- | Read the current ctx.
+-- | Read the current context.
 context :: forall props ctx state action m. HaloM props ctx state action m ctx
 context = HaloM (liftF (Context identity))
 
