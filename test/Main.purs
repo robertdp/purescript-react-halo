@@ -21,14 +21,14 @@ main =
   launchAff_ do
     runSpec [ consoleReporter ] do
       describe "purescript-react-halo" do
-        describe "Props" runContextTests
+        describe "Props" runPropTests
         describe "State" runStateTests
         describe "Subscriptions" runSubscriptionTests
         describe "Parallelism" runParallelismTests
         describe "Forking" runForkingTests
 
-runContextTests :: Spec Unit
-runContextTests = do
+runPropTests :: Spec Unit
+runPropTests = do
   describe "Update" do
     it "does not fire in initialization" do
       { expect } <- makeUpdateState
