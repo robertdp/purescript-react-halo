@@ -86,7 +86,7 @@ evalHaloF hs@(HaloState s) = case _ of
 -- | A simpler interface for building the components eval function. The main lifecycle events map directly into
 -- | actions, so only the action handling logic needs to be written using `HaloM`.
 type EvalSpec props ctx state action m
-  = { onInitialize :: props -> ctx -> Maybe action
+  = { onInitialize :: { props :: props, context :: ctx } -> Maybe action
     , onUpdate :: { props :: props, context :: ctx } -> { props :: props, context :: ctx } -> Maybe action
     , onAction :: action -> HaloM props ctx state action m Unit
     , onFinalize :: Maybe action
@@ -95,7 +95,7 @@ type EvalSpec props ctx state action m
 -- | The empty `EvalSpec`.
 defaultEval :: forall props ctx action state m. EvalSpec props ctx state action m
 defaultEval =
-  { onInitialize: \_ _ -> Nothing
+  { onInitialize: \_ -> Nothing
   , onUpdate: \_ _ -> Nothing
   , onAction: \_ -> pure unit
   , onFinalize: Nothing
@@ -108,7 +108,7 @@ mkEval ::
   Lifecycle props ctx action ->
   HaloM props ctx state action m Unit
 mkEval f = case _ of
-  Initialize props context -> traverse_ eval.onAction $ eval.onInitialize props context
+  Initialize init -> traverse_ eval.onAction $ eval.onInitialize init
   Update old new -> traverse_ eval.onAction $ eval.onUpdate old new
   Action action -> eval.onAction action
   Finalize -> traverse_ eval.onAction eval.onFinalize
@@ -123,7 +123,7 @@ runInitialize :: forall props ctx state action. HaloState props ctx action state
 runInitialize hs@(HaloState s) = do
   props <- Ref.read s.props
   context <- Ref.read s.context
-  runAff $ evalHaloM hs $ s.eval $ Initialize props context
+  runAff $ evalHaloM hs $ s.eval $ Initialize { props, context }
 
 handleUpdate :: forall props ctx state action. HaloState props ctx action state -> props -> ctx -> Effect Unit
 handleUpdate hs@(HaloState s) props context = do
