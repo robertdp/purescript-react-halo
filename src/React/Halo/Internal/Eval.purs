@@ -21,15 +21,15 @@ import React.Halo.Internal.Types (ForkId(..), Lifecycle(..), SubscriptionId(..))
 import Unsafe.Reference (unsafeRefEq)
 
 -- | Interprets `HaloM` into the base monad `Aff` for asynchronous effects.
-evalHaloM :: forall context state action. HaloState context state action -> HaloM context state action Aff ~> Aff
+evalHaloM :: forall ctx state action. HaloState ctx state action -> HaloM ctx state action Aff ~> Aff
 evalHaloM hs (HaloM halo) = foldFree (evalHaloF hs) halo
 
 -- | Interprets `HaloAp` into the base applicative `ParAff` for parallel effects.
-evalHaloAp :: forall context state action. HaloState context state action -> HaloAp context state action Aff ~> ParAff
+evalHaloAp :: forall ctx state action. HaloState ctx state action -> HaloAp ctx state action Aff ~> ParAff
 evalHaloAp hs (HaloAp halo) = foldFreeAp (parallel <<< evalHaloM hs) halo
 
 -- | Interprets `HaloF` into the base monad `Aff`, keeping track of state in `HaloState`.
-evalHaloF :: forall context state action. HaloState context state action -> HaloF context state action Aff ~> Aff
+evalHaloF :: forall ctx state action. HaloState ctx state action -> HaloF ctx state action Aff ~> Aff
 evalHaloF hs@(HaloState s) = case _ of
   Context k ->
     liftEffect do
@@ -81,15 +81,15 @@ evalHaloF hs@(HaloState s) = case _ of
 
 -- | A simpler interface for building the components eval function. The main lifecycle events map directly into
 -- | actions, so only the action handling logic needs to be written using `HaloM`.
-type EvalSpec context state action m
-  = { onInitialize :: context -> Maybe action
-    , onUpdate :: context -> context -> Maybe action
-    , onAction :: action -> HaloM context state action m Unit
+type EvalSpec ctx state action m
+  = { onInitialize :: ctx -> Maybe action
+    , onUpdate :: ctx -> ctx -> Maybe action
+    , onAction :: action -> HaloM ctx state action m Unit
     , onFinalize :: Maybe action
     }
 
 -- | The empty `EvalSpec`.
-defaultEval :: forall context action state m. EvalSpec context state action m
+defaultEval :: forall ctx action state m. EvalSpec ctx state action m
 defaultEval =
   { onInitialize: \_ -> Nothing
   , onUpdate: \_ _ -> Nothing
@@ -99,12 +99,12 @@ defaultEval =
 
 -- | Given an `EvalSpec` builder, it will return an eval function.
 mkEval ::
-  forall context state action m.
-  (EvalSpec context state action m -> EvalSpec context state action m) ->
-  Lifecycle context action ->
-  HaloM context state action m Unit
+  forall ctx state action m.
+  (EvalSpec ctx state action m -> EvalSpec ctx state action m) ->
+  Lifecycle ctx action ->
+  HaloM ctx state action m Unit
 mkEval f = case _ of
-  Initialize context -> traverse_ eval.onAction $ eval.onInitialize context
+  Initialize ctx -> traverse_ eval.onAction $ eval.onInitialize ctx
   Update old new -> traverse_ eval.onAction $ eval.onUpdate old new
   Action action -> eval.onAction action
   Finalize -> traverse_ eval.onAction eval.onFinalize
@@ -115,24 +115,24 @@ mkEval f = case _ of
 runAff :: Aff Unit -> Effect Unit
 runAff = Aff.runAff_ (either throwError pure)
 
-runInitialize :: forall context state action. HaloState context action state -> Effect Unit
+runInitialize :: forall ctx state action. HaloState ctx action state -> Effect Unit
 runInitialize hs@(HaloState s) = do
   context <- Ref.read s.context
   runAff $ evalHaloM hs $ s.eval $ Initialize context
 
-handleUpdate :: forall context state action. HaloState context action state -> context -> Effect Unit
+handleUpdate :: forall ctx state action. HaloState ctx action state -> ctx -> Effect Unit
 handleUpdate hs@(HaloState s) context = do
   context' <- Ref.read s.context
   unless (unsafeRefEq context context') do
     Ref.write context s.context
     runAff $ evalHaloM hs $ s.eval $ Update context' context
 
-handleAction :: forall context state action. HaloState context state action -> action -> Effect Unit
+handleAction :: forall ctx state action. HaloState ctx state action -> action -> Effect Unit
 handleAction hs@(HaloState s) action = do
   unlessM (Ref.read s.finalized) do
     runAff $ evalHaloM hs $ s.eval $ Action action
 
-runFinalize :: forall context state action. HaloState context state action -> Effect Unit
+runFinalize :: forall ctx state action. HaloState ctx state action -> Effect Unit
 runFinalize hs@(HaloState s) = do
   Ref.write true s.finalized
   subscriptions <- Ref.modify' (\s' -> { state: Map.empty, value: s' }) s.subscriptions

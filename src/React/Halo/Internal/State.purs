@@ -11,12 +11,12 @@ import React.Halo.Internal.Control (HaloM)
 import React.Halo.Internal.Types (ForkId, Lifecycle, SubscriptionId)
 
 -- | HThe alo component state used during evaluation.
-newtype HaloState context state action
+newtype HaloState ctx state action
   = HaloState
-  { eval :: Lifecycle context action -> HaloM context state action Aff Unit
+  { eval :: Lifecycle ctx action -> HaloM ctx state action Aff Unit
   , update :: state -> Effect Unit
   , finalized :: Ref Boolean
-  , context :: Ref context
+  , context :: Ref ctx
   , state :: Ref state
   , fresh :: Ref Int
   , subscriptions :: Ref (Map SubscriptionId (Effect Unit))
@@ -25,13 +25,13 @@ newtype HaloState context state action
 
 -- | Creates a starting `HaloState`, ready for initialization.
 createInitialState ::
-  forall context state action.
-  { context :: context
+  forall ctx state action.
+  { context :: ctx
   , state :: state
-  , eval :: Lifecycle context action -> HaloM context state action Aff Unit
+  , eval :: Lifecycle ctx action -> HaloM ctx state action Aff Unit
   , update :: state -> Effect Unit
   } ->
-  Effect (HaloState context state action)
+  Effect (HaloState ctx state action)
 createInitialState spec@{ eval, update } = do
   finalized <- Ref.new false
   fresh' <- Ref.new 0
@@ -42,5 +42,5 @@ createInitialState spec@{ eval, update } = do
   pure $ HaloState { eval, update, finalized, context, state, fresh: fresh', subscriptions, forks }
 
 -- | Issue a new identifier, unique to this component.
-fresh :: forall context state action a. (Int -> a) -> HaloState context state action -> Effect a
+fresh :: forall ctx state action a. (Int -> a) -> HaloState ctx state action -> Effect a
 fresh f (HaloState s) = Ref.modify' (\a -> { state: a + 1, value: f a }) s.fresh

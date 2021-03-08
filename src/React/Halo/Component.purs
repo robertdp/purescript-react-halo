@@ -13,23 +13,23 @@ import React.Halo.Internal.Eval (handleAction, handleUpdate, runFinalize, runIni
 import React.Halo.Internal.State (HaloState, createInitialState)
 import React.Halo.Internal.Types (Lifecycle)
 
-type HookSpec context state action m
-  = { context :: context
+type HookSpec ctx state action m
+  = { context :: ctx
     , initialState :: state
-    , eval :: Lifecycle context action -> HaloM context state action m Unit
+    , eval :: Lifecycle ctx action -> HaloM ctx state action m Unit
     }
 
-newtype UseHalo context state action hooks
-  = UseHalo (UseEffect Unit (UseEffect Unit (UseMemo Unit (HaloState context state action) (UseState state hooks))))
+newtype UseHalo ctx state action hooks
+  = UseHalo (UseEffect Unit (UseEffect Unit (UseMemo Unit (HaloState ctx state action) (UseState state hooks))))
 
-derive instance newtypeUseHalo :: Newtype (UseHalo context state action hooks) _
+derive instance newtypeUseHalo :: Newtype (UseHalo ctx state action hooks) _
 
 -- | Run renderless Halo in the current component. This allows Halo to be used with other hooks and other ways of
 -- | building components.
 useHalo ::
-  forall context state action.
-  HookSpec context state action Aff ->
-  Hook (UseHalo context state action) (state /\ (action -> Effect Unit))
+  forall ctx state action.
+  HookSpec ctx state action Aff ->
+  Hook (UseHalo ctx state action) (state /\ (action -> Effect Unit))
 useHalo { context, initialState, eval } =
   React.coerceHook React.do
     state /\ setState <- React.useState' initialState
@@ -41,13 +41,13 @@ useHalo { context, initialState, eval } =
     React.useEffectAlways (handleUpdate halo context *> mempty)
     pure (state /\ handleAction halo)
 
-type ComponentSpec props context state action m
-  = { hooks :: props -> forall hooks. Render Unit hooks context
-    , initialState :: props -> context -> state
-    , eval :: Lifecycle context action -> HaloM context state action m Unit
+type ComponentSpec props ctx state action m
+  = { hooks :: props -> forall hooks. Render Unit hooks ctx
+    , initialState :: props -> ctx -> state
+    , eval :: Lifecycle ctx action -> HaloM ctx state action m Unit
     , render ::
         { props :: props
-        , context :: context
+        , context :: ctx
         , state :: state
         , send :: action -> Effect Unit
         } ->
@@ -56,9 +56,9 @@ type ComponentSpec props context state action m
 
 -- | Build a component by providing a name and a Halo component spec.
 component ::
-  forall props context state action.
+  forall props ctx state action.
   String ->
-  ComponentSpec props context state action Aff ->
+  ComponentSpec props ctx state action Aff ->
   Component props
 component name spec@{ eval, render } =
   React.component name \props -> React.do
