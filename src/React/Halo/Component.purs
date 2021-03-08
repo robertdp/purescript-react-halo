@@ -43,7 +43,7 @@ useHalo { props, context, initialState, eval } =
     pure (state /\ handleAction halo)
 
 type ComponentSpec hooks props ctx state action m
-  = { hooks :: props -> Render Unit hooks ctx
+  = { context :: props -> Render Unit hooks ctx
     , initialState :: props -> ctx -> state
     , eval :: Lifecycle props ctx action -> HaloM props ctx state action m Unit
     , render ::
@@ -63,7 +63,7 @@ component ::
   Component props
 component name spec@{ eval, render } =
   React.component name \props -> React.do
-    context <- spec.hooks props
+    context <- spec.context props
     initialState <- React.useMemo unit \_ -> spec.initialState props context
     state /\ send <- useHalo { props, context, initialState, eval }
     pure (render { props, context, state, send })
