@@ -17,7 +17,7 @@
     "purescript-aff": "^v6.0.0",
     "purescript-free": "^v6.0.0",
     "purescript-freeap": "^v6.0.0",
-    "purescript-halogen-subscriptions": "^v1.0.0",
+    "purescript-halogen-subscriptions": "https://github.com/purescript-halogen/purescript-halogen-subscriptions.git#^1.0.0",
     "purescript-react-basic-hooks": "^v7.0.0",
     "purescript-refs": "^v5.0.0",
     "purescript-unsafe-reference": "^v4.0.0"
