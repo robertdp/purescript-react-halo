@@ -10,21 +10,9 @@ Module documentation is [published on Pursuit](http://pursuit.purescript.org/pac
 
 ## Using with [Spago](https://github.com/purescript/spago)
 
-Update the additions in your `packages.dhall`:
-
-```dhall
-let additions =
-  { react-halo =
-    { dependencies = [ "aff", "event", "free", "freeap", "react-basic-hooks", "refs", "unsafe-reference" ]
-    , repo = "https://github.com/robertdp/purescript-react-halo.git"
-    , version = "v1.2.1"
-    }
-  }
-```
-
-Then install with Spago:
-
 `$ spago install react-halo`
+or
+`$ npx spago install react-halo`
 
 ## What does Halo provide?
 
