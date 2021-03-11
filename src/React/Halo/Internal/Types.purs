@@ -7,7 +7,7 @@ import Prelude
 -- | - `Initialize` contains the initial props. It occurs when the component mounts, and only once per component.
 -- | - `Update` contains the previous and new props. It occurs when the component re-renders and the props have changes.
 -- | - `Action` contains the dispatched action. It occurs each time an action is dispatched to be eval'd, up until the
--- |   `Finalize` event
+-- |   `Finalize` event.
 -- | - `Finalize` occurs when the component unmounts.
 data Lifecycle props ctx action
   = Initialize { props :: props, context :: ctx }

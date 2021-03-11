@@ -7,6 +7,7 @@ import Effect (Effect)
 import Effect.Aff (Aff, Fiber)
 import Effect.Ref (Ref)
 import Effect.Ref as Ref
+import Halogen.Subscription (Subscription)
 import React.Halo.Internal.Control (HaloM)
 import React.Halo.Internal.Types (ForkId, Lifecycle, SubscriptionId)
 
@@ -20,7 +21,7 @@ newtype HaloState props ctx state action
   , context :: Ref ctx
   , state :: Ref state
   , fresh :: Ref Int
-  , subscriptions :: Ref (Map SubscriptionId (Effect Unit))
+  , subscriptions :: Ref (Map SubscriptionId Subscription)
   , forks :: Ref (Map ForkId (Fiber Unit))
   }
 
