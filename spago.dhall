@@ -6,7 +6,7 @@ You can edit this file as you like.
 , license = "BSD-3-Clause"
 , repository = "https://github.com/robertdp/purescript-react-halo.git"
 , dependencies =
-  [ "aff", "event", "free", "freeap", "react-basic-hooks", "refs", "unsafe-reference" ]
+  [ "aff", "free", "freeap", "halogen-subscriptions", "react-basic-hooks", "refs", "unsafe-reference" ]
 , packages = ./packages.dhall
 , sources = [ "src/**/*.purs" ]
 }

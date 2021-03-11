@@ -4,7 +4,7 @@ import Prelude
 import Control.Applicative.Free (foldFreeAp)
 import Control.Monad.Free (foldFree)
 import Data.Either (either)
-import Data.Foldable (sequence_, traverse_)
+import Data.Foldable (traverse_)
 import Data.Map as Map
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..))
@@ -13,7 +13,7 @@ import Effect.Aff (Aff, ParAff, finally, parallel, sequential, throwError)
 import Effect.Aff as Aff
 import Effect.Class (liftEffect)
 import Effect.Ref as Ref
-import FRP.Event as Event
+import Halogen.Subscription (subscribe, unsubscribe)
 import React.Halo.Internal.Control (HaloAp(..), HaloF(..), HaloM(..))
 import React.Halo.Internal.State (HaloState(..))
 import React.Halo.Internal.State as State
@@ -53,13 +53,13 @@ evalHaloF hs@(HaloState s) = case _ of
     liftEffect do
       sid <- State.fresh SubscriptionId hs
       unlessM (Ref.read s.finalized) do
-        canceller <- Event.subscribe (sub sid) (handleAction hs)
+        canceller <- subscribe (sub sid) (handleAction hs)
         Ref.modify_ (Map.insert sid canceller) s.subscriptions
       pure (k sid)
   Unsubscribe sid a ->
     liftEffect do
-      canceller <- Map.lookup sid <$> Ref.read s.subscriptions
-      sequence_ canceller
+      subscription <- Map.lookup sid <$> Ref.read s.subscriptions
+      traverse_ unsubscribe subscription
       pure a
   Lift m -> m
   Par p -> sequential (evalHaloAp hs p)
@@ -143,7 +143,7 @@ runFinalize :: forall props ctx state action. HaloState props ctx state action -
 runFinalize hs@(HaloState s) = do
   Ref.write true s.finalized
   subscriptions <- Ref.modify' (\s' -> { state: Map.empty, value: s' }) s.subscriptions
-  sequence_ (Map.values subscriptions)
+  traverse_ unsubscribe (Map.values subscriptions)
   forks <- Ref.modify' (\s' -> { state: Map.empty, value: s' }) s.forks
   traverse_ (runAff <<< Aff.killFiber (Aff.error "Cancelled")) (Map.values forks)
   runAff $ evalHaloM hs $ s.eval Finalize

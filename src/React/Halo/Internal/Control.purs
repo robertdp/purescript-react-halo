@@ -14,7 +14,7 @@ import Data.Bifunctor (lmap)
 import Data.Tuple (Tuple)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
-import FRP.Event (Event)
+import Halogen.Subscription (Emitter)
 import React.Halo.Internal.Types (ForkId, SubscriptionId)
 
 -- | The Halo evaluation algebra
@@ -29,7 +29,7 @@ data HaloF props ctx state action (m :: Type -> Type) a
   = Props (props -> a)
   | Context (ctx -> a)
   | State (state -> Tuple a state)
-  | Subscribe (SubscriptionId -> Event action) (SubscriptionId -> a)
+  | Subscribe (SubscriptionId -> Emitter action) (SubscriptionId -> a)
   | Unsubscribe SubscriptionId a
   | Lift (m a)
   | Par (HaloAp props ctx state action m a)
@@ -150,16 +150,16 @@ props = HaloM (liftF (Props identity))
 context :: forall props ctx state action m. HaloM props ctx state action m ctx
 context = HaloM (liftF (Context identity))
 
--- | Subscribe to new actions from an `Event`. Subscriptions will be automatically cancelled when the component
+-- | Subscribe to new actions from an `Emitter`. Subscriptions will be automatically cancelled when the component
 -- | unmounts.
 -- |
 -- | Returns a `SubscriptionId` which can be used with `unsubscribe` to manually cancel a subscription.
-subscribe :: forall props ctx state action m. Event action -> HaloM props ctx state action m SubscriptionId
+subscribe :: forall props ctx state action m. Emitter action -> HaloM props ctx state action m SubscriptionId
 subscribe = subscribe' <<< const
 
 -- | Same as `subscribe` but the event-producing logic is also passed the `SuscriptionId`. This is useful when events
 -- | need to unsubscribe themselves.
-subscribe' :: forall props ctx state action m. (SubscriptionId -> Event action) -> HaloM props ctx state action m SubscriptionId
+subscribe' :: forall props ctx state action m. (SubscriptionId -> Emitter action) -> HaloM props ctx state action m SubscriptionId
 subscribe' event = HaloM (liftF (Subscribe event identity))
 
 -- | Cancels the event subscription belonging to the `SubscriptionId`.
