@@ -11,7 +11,7 @@ import Halogen.Subscription (Subscription)
 import React.Halo.Internal.Control (HaloM)
 import React.Halo.Internal.Types (ForkId, Lifecycle, SubscriptionId)
 
--- | HThe alo component state used during evaluation.
+-- | The Halo component state used during evaluation.
 newtype HaloState props ctx state action
   = HaloState
   { eval :: Lifecycle props ctx action -> HaloM props ctx state action Aff Unit
