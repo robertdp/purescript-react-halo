@@ -35,11 +35,11 @@ runPropTests = do
       expect 0
     it "does not fire when props are referentially equal" do
       { state, initialProps, expect } <- makeUpdateState
-      liftEffect $ Eval.handleUpdate state initialProps unit
+      liftEffect $ Eval.handleUpdate state initialProps
       expect 0
     it "does fire when props are not referentially equal" do
       { state, expect } <- makeUpdateState
-      liftEffect $ Eval.handleUpdate state { value: "new object" } unit
+      liftEffect $ Eval.handleUpdate state { value: "new object" }
       expect 1
   where
   makeUpdateState =
@@ -53,7 +53,7 @@ runPropTests = do
         initialProps = { value: "" }
 
         expect x = liftEffect (Ref.read count) >>= shouldEqual x
-      state <- State.createInitialState { props: initialProps, context: unit, state: unit, eval, update: mempty }
+      state <- State.createInitialState { props: initialProps, state: unit, eval, update: mempty }
       Eval.runInitialize state
       pure { state, initialProps, expect }
 
@@ -89,7 +89,7 @@ runStateTests = do
         eval = case _ of
           Halo.Action f -> modify_ f
           _ -> pure unit
-      state <- State.createInitialState { props: unit, context: unit, state: initialState, eval, update }
+      state <- State.createInitialState { props: unit, state: initialState, eval, update }
       Eval.runInitialize state
       let
         modify = liftEffect <<< Eval.handleAction state
@@ -107,7 +107,6 @@ runParallelismTests = do
         state <-
           State.createInitialState
             { props: unit
-            , context: unit
             , state: 0
             , update: \x -> Ref.write (Just x) internalState
             , eval:

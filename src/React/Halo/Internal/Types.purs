@@ -9,21 +9,19 @@ import Prelude
 -- | - `Action` contains the dispatched action. It occurs each time an action is dispatched to be eval'd, up until the
 -- |   `Finalize` event.
 -- | - `Finalize` occurs when the component unmounts.
-data Lifecycle props ctx action
-  = Initialize { props :: props, context :: ctx }
-  | Update { props :: props, context :: ctx } { props :: props, context :: ctx }
+data Lifecycle props action
+  = Initialize props
+  | Update props props
   | Action action
   | Finalize
 
-newtype SubscriptionId
-  = SubscriptionId Int
+newtype SubscriptionId = SubscriptionId Int
 
 derive newtype instance eqSubscriptionId :: Eq SubscriptionId
 
 derive newtype instance ordSubscriptionId :: Ord SubscriptionId
 
-newtype ForkId
-  = ForkId Int
+newtype ForkId = ForkId Int
 
 derive newtype instance eqForkId :: Eq ForkId
 

@@ -12,13 +12,11 @@ import React.Halo.Internal.Control (HaloM)
 import React.Halo.Internal.Types (ForkId, Lifecycle, SubscriptionId)
 
 -- | The Halo component state used during evaluation.
-newtype HaloState props ctx state action
-  = HaloState
-  { eval :: Lifecycle props ctx action -> HaloM props ctx state action Aff Unit
+newtype HaloState props state action = HaloState
+  { eval :: Lifecycle props action -> HaloM props state action Aff Unit
   , update :: state -> Effect Unit
   , finalized :: Ref Boolean
   , props :: Ref props
-  , context :: Ref ctx
   , state :: Ref state
   , fresh :: Ref Int
   , subscriptions :: Ref (Map SubscriptionId Subscription)
@@ -26,25 +24,23 @@ newtype HaloState props ctx state action
   }
 
 -- | Creates a starting `HaloState`, ready for initialization.
-createInitialState ::
-  forall props ctx state action.
-  { props :: props
-  , context :: ctx
-  , state :: state
-  , eval :: Lifecycle props ctx action -> HaloM props ctx state action Aff Unit
-  , update :: state -> Effect Unit
-  } ->
-  Effect (HaloState props ctx state action)
+createInitialState
+  :: forall props state action
+   . { props :: props
+     , state :: state
+     , eval :: Lifecycle props action -> HaloM props state action Aff Unit
+     , update :: state -> Effect Unit
+     }
+  -> Effect (HaloState props state action)
 createInitialState spec@{ eval, update } = do
   finalized <- Ref.new false
   fresh' <- Ref.new 0
   props <- Ref.new spec.props
-  context <- Ref.new spec.context
   state <- Ref.new spec.state
   subscriptions <- Ref.new Map.empty
   forks <- Ref.new Map.empty
-  pure $ HaloState { eval, update, finalized, props, context, state, fresh: fresh', subscriptions, forks }
+  pure $ HaloState { eval, update, finalized, props, state, fresh: fresh', subscriptions, forks }
 
 -- | Issue a new identifier, unique to this component.
-fresh :: forall props ctx state action a. (Int -> a) -> HaloState props ctx state action -> Effect a
+fresh :: forall props state action a. (Int -> a) -> HaloState props state action -> Effect a
 fresh f (HaloState s) = Ref.modify' (\a -> { state: a + 1, value: f a }) s.fresh

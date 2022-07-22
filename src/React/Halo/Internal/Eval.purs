@@ -1,6 +1,7 @@
 module React.Halo.Internal.Eval where
 
 import Prelude
+
 import Control.Applicative.Free (foldFreeAp)
 import Control.Monad.Free (foldFree)
 import Data.Either (either)
@@ -21,33 +22,29 @@ import React.Halo.Internal.Types (ForkId(..), Lifecycle(..), SubscriptionId(..))
 import Unsafe.Reference (unsafeRefEq)
 
 -- | Interprets `HaloM` into the base monad `Aff` for asynchronous effects.
-evalHaloM :: forall props ctx state action. HaloState props ctx state action -> HaloM props ctx state action Aff ~> Aff
+evalHaloM :: forall props state action. HaloState props state action -> HaloM props state action Aff ~> Aff
 evalHaloM hs (HaloM halo) = foldFree (evalHaloF hs) halo
 
 -- | Interprets `HaloAp` into the base applicative `ParAff` for parallel effects.
-evalHaloAp :: forall props ctx state action. HaloState props ctx state action -> HaloAp props ctx state action Aff ~> ParAff
+evalHaloAp :: forall props state action. HaloState props state action -> HaloAp props state action Aff ~> ParAff
 evalHaloAp hs (HaloAp halo) = foldFreeAp (parallel <<< evalHaloM hs) halo
 
 -- | Interprets `HaloF` into the base monad `Aff`, keeping track of state in `HaloState`.
-evalHaloF :: forall props ctx state action. HaloState props ctx state action -> HaloF props ctx state action Aff ~> Aff
+evalHaloF :: forall props state action. HaloState props state action -> HaloF props state action Aff ~> Aff
 evalHaloF hs@(HaloState s) = case _ of
   Props k ->
     liftEffect do
       props <- Ref.read s.props
       pure (k props)
-  Context k ->
-    liftEffect do
-      context <- Ref.read s.context
-      pure (k context)
   State f ->
     liftEffect do
       state <- Ref.read s.state
       case f state of
         Tuple a state'
           | not unsafeRefEq state state' -> do
-            Ref.write state' s.state
-            s.update state'
-            pure a
+              Ref.write state' s.state
+              s.update state'
+              pure a
           | otherwise -> pure a
   Subscribe sub k ->
     liftEffect do
@@ -85,15 +82,15 @@ evalHaloF hs@(HaloState s) = case _ of
 
 -- | A simpler interface for building the components eval function. The main lifecycle events map directly into
 -- | actions, so only the action handling logic needs to be written using `HaloM`.
-type EvalSpec props ctx state action m
-  = { onInitialize :: { props :: props, context :: ctx } -> Maybe action
-    , onUpdate :: { props :: props, context :: ctx } -> { props :: props, context :: ctx } -> Maybe action
-    , onAction :: action -> HaloM props ctx state action m Unit
-    , onFinalize :: Maybe action
-    }
+type EvalSpec props state action m =
+  { onInitialize :: props -> Maybe action
+  , onUpdate :: props -> props -> Maybe action
+  , onAction :: action -> HaloM props state action m Unit
+  , onFinalize :: Maybe action
+  }
 
 -- | The empty `EvalSpec`.
-defaultEval :: forall props ctx action state m. EvalSpec props ctx state action m
+defaultEval :: forall props action state m. EvalSpec props state action m
 defaultEval =
   { onInitialize: \_ -> Nothing
   , onUpdate: \_ _ -> Nothing
@@ -102,44 +99,39 @@ defaultEval =
   }
 
 -- | Given an `EvalSpec` builder, it will return an eval function.
-mkEval ::
-  forall props ctx state action m.
-  (EvalSpec props ctx state action m -> EvalSpec props ctx state action m) ->
-  Lifecycle props ctx action ->
-  HaloM props ctx state action m Unit
-mkEval f = case _ of
-  Initialize init -> traverse_ eval.onAction $ eval.onInitialize init
-  Update old new -> traverse_ eval.onAction $ eval.onUpdate old new
+mkEval
+  :: forall props state action m
+   . EvalSpec props state action m
+  -> Lifecycle props action
+  -> HaloM props state action m Unit
+mkEval eval = case _ of
+  Initialize props -> traverse_ eval.onAction $ eval.onInitialize props
+  Update prevProps newProps -> traverse_ eval.onAction $ eval.onUpdate prevProps newProps
   Action action -> eval.onAction action
   Finalize -> traverse_ eval.onAction eval.onFinalize
-  where
-  eval = f defaultEval
 
 -- | Simple way to run Aff logic asynchronously, while bringing errors back into Effect.
 runAff :: Aff Unit -> Effect Unit
 runAff = Aff.runAff_ (either throwError pure)
 
-runInitialize :: forall props ctx state action. HaloState props ctx action state -> Effect Unit
+runInitialize :: forall props state action. HaloState props action state -> Effect Unit
 runInitialize hs@(HaloState s) = do
   props <- Ref.read s.props
-  context <- Ref.read s.context
-  runAff $ evalHaloM hs $ s.eval $ Initialize { props, context }
+  runAff $ evalHaloM hs $ s.eval $ Initialize props
 
-handleUpdate :: forall props ctx state action. HaloState props ctx action state -> props -> ctx -> Effect Unit
-handleUpdate hs@(HaloState s) props context = do
-  props' <- Ref.read s.props
-  context' <- Ref.read s.context
-  unless (unsafeRefEq props props' && unsafeRefEq context context') do
-    Ref.write props s.props
-    Ref.write context s.context
-    runAff $ evalHaloM hs $ s.eval $ Update { props: props', context: context' } { props, context }
+handleUpdate :: forall props state action. HaloState props action state -> props -> Effect Unit
+handleUpdate hs@(HaloState s) newProps = do
+  prevProps <- Ref.read s.props
+  unless (unsafeRefEq newProps prevProps) do
+    Ref.write newProps s.props
+    runAff $ evalHaloM hs $ s.eval $ Update prevProps newProps
 
-handleAction :: forall props ctx state action. HaloState props ctx state action -> action -> Effect Unit
+handleAction :: forall props state action. HaloState props state action -> action -> Effect Unit
 handleAction hs@(HaloState s) action = do
   unlessM (Ref.read s.finalized) do
     runAff $ evalHaloM hs $ s.eval $ Action action
 
-runFinalize :: forall props ctx state action. HaloState props ctx state action -> Effect Unit
+runFinalize :: forall props state action. HaloState props state action -> Effect Unit
 runFinalize hs@(HaloState s) = do
   Ref.write true s.finalized
   subscriptions <- Ref.modify' (\s' -> { state: Map.empty, value: s' }) s.subscriptions
