@@ -25,17 +25,12 @@ derive instance newtypeUseHalo :: Newtype (UseHalo props state action hooks) _
 
 -- | Run renderless Halo in the current component. This allows Halo to be used with other hooks and other ways of
 -- | building components.
-useHalo
-  :: forall props state action
-   . HookSpec props state action Aff
-  -> Hook (UseHalo props state action) (state /\ (action -> Effect Unit))
+useHalo :: forall props state action. HookSpec props state action Aff -> Hook (UseHalo props state action) (state /\ (action -> Effect Unit))
 useHalo { props, initialState, eval } =
   React.coerceHook React.do
     state /\ setState <- React.useState' initialState
-    halo <-
-      React.useMemo unit \_ ->
-        unsafePerformEffect do
-          createInitialState { props, state: initialState, eval, update: setState }
+    halo <- React.useMemo unit \_ -> unsafePerformEffect $
+      createInitialState { props, state: initialState, eval, update: setState }
     React.useEffectOnce (runInitialize halo *> pure (runFinalize halo))
     React.useEffectAlways (handleUpdate halo props *> mempty)
     pure (state /\ handleAction halo)

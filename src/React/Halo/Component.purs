@@ -14,20 +14,11 @@ import React.Halo.Internal.Types (Lifecycle)
 type ComponentSpec props state action m =
   { initialState :: props -> state
   , eval :: Lifecycle props action -> HaloM props state action m Unit
-  , render ::
-      { props :: props
-      , state :: state
-      , send :: action -> Effect Unit
-      }
-      -> JSX
+  , render :: { props :: props, state :: state, send :: action -> Effect Unit } -> JSX
   }
 
 -- | Build a component by providing a name and a Halo component spec.
-component
-  :: forall props state action
-   . String
-  -> ComponentSpec props state action Aff
-  -> Component props
+component :: forall props state action. String -> ComponentSpec props state action Aff -> Component props
 component name spec@{ eval, render } =
   React.component name \props -> React.do
     initialState <- React.useMemo unit \_ -> spec.initialState props

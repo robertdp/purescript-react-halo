@@ -58,8 +58,10 @@ evalHaloF hs@(HaloState s) = case _ of
       subscription <- Map.lookup sid <$> Ref.read s.subscriptions
       traverse_ unsubscribe subscription
       pure a
-  Lift m -> m
-  Par p -> sequential (evalHaloAp hs p)
+  Lift m ->
+    m
+  Par p ->
+    sequential (evalHaloAp hs p)
   Fork fh k ->
     liftEffect do
       fid <- State.fresh ForkId hs
@@ -99,11 +101,7 @@ defaultEval =
   }
 
 -- | Given an `EvalSpec` builder, it will return an eval function.
-mkEval
-  :: forall props state action m
-   . EvalSpec props state action m
-  -> Lifecycle props action
-  -> HaloM props state action m Unit
+mkEval :: forall props state action m. EvalSpec props state action m -> Lifecycle props action -> HaloM props state action m Unit
 mkEval eval = case _ of
   Initialize props -> traverse_ eval.onAction $ eval.onInitialize props
   Update prevProps newProps -> traverse_ eval.onAction $ eval.onUpdate prevProps newProps
@@ -127,7 +125,7 @@ handleUpdate hs@(HaloState s) newProps = do
     runAff $ evalHaloM hs $ s.eval $ Update prevProps newProps
 
 handleAction :: forall props state action. HaloState props state action -> action -> Effect Unit
-handleAction hs@(HaloState s) action = do
+handleAction hs@(HaloState s) action =
   unlessM (Ref.read s.finalized) do
     runAff $ evalHaloM hs $ s.eval $ Action action
 
