@@ -35,11 +35,11 @@ data Lifecycle props action
 The helper `mkEval` exists to make this easier to work with:
 
 ```purescript
-data CustomAction
+data Action
   = Init
   | ...
 
-onAction :: forall props state m. CustomAction -> HaloM props state CustomAction m Unit
+onAction :: forall props state m. Action -> HaloM props state Action m Unit
 
 eval = Halo.mkEval Halo.defaultEval { onInitialize = \props -> Just Init, onAction = onAction }
 ```
