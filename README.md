@@ -39,7 +39,7 @@ data CustomAction
   = Init
   | ...
 
-onAction :: forall props state action m. action -> HaloM props state action m Unit
+onAction :: forall props state m. CustomAction -> HaloM props state CustomAction m Unit
 
 eval = Halo.mkEval Halo.defaultEval { onInitialize = \props -> Just Init, onAction = onAction }
 ```
