@@ -32,6 +32,18 @@ data Lifecycle props action
   | Finalize            -- when the component unmounts
 ```
 
+The helper `mkEval` exists to make this easier to work with:
+
+```purescript
+data CustomAction
+  = Init
+  | ...
+
+onAction :: forall props state action m. action -> HaloM props state action m Unit
+
+eval = Halo.mkEval Halo.defaultEval { onInitialize = \props -> Just Init, onAction = onAction }
+```
+
 `HaloM` is also a monad transformer, and so you can lift any monad `m`  logic into `HaloM`. Just be aware that in order to run the logic, Halo requires that you `hoist` (convert) your chosen monad into `Aff` before returning it.
 
 ### Hoisting
