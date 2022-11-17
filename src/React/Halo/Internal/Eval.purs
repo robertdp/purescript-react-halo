@@ -103,7 +103,7 @@ defaultEval =
 -- | Given an `EvalSpec` builder, it will return an eval function.
 mkEval :: forall props state action m. EvalSpec props state action m -> Lifecycle props action -> HaloM props state action m Unit
 mkEval eval = case _ of
-  Initialize -> traverse_ eval.handleAction $ eval.initialize
+  Initialize -> traverse_ eval.handleAction eval.initialize
   Update props -> traverse_ eval.handleAction $ eval.update props
   Action action -> eval.handleAction action
   Finalize -> traverse_ eval.handleAction eval.finalize
