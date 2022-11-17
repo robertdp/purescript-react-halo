@@ -47,7 +47,7 @@ runPropTests = do
       count <- Ref.new 0
       let
         eval = case _ of
-          Halo.Update _ _ -> liftEffect $ Ref.modify_ (add 1) count
+          Halo.Update _ -> liftEffect $ Ref.modify_ (add 1) count
           _ -> pure unit
 
         initialProps = { value: "" }

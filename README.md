@@ -26,9 +26,9 @@ where `Lifecycle` is:
 
 ```purescript
 data Lifecycle props action
-  = Initialize props    -- when the component mounts
-  | Update props props  -- when the props change
-  | Action action       -- when an action is dispatched
+  = Initialize          -- when the component mounts
+  | Update props        -- when the props change, passing the previous props
+  | Action action       -- when an action is dispatched, passing the action
   | Finalize            -- when the component unmounts
 ```
 
@@ -36,15 +36,16 @@ The helper `mkEval` exists to make this easier to work with:
 
 ```purescript
 data Action
-  = Init
+  = LoadRemoteState
+  | PersistRemoteState
   | ...
 
-onAction :: forall props state m. Action -> HaloM props state Action m Unit
+handleAction :: forall props state m. Action -> HaloM props state Action m Unit
 
-eval = Halo.mkEval Halo.defaultEval { onInitialize = \props -> Just Init, onAction = onAction }
+eval = Halo.mkEval Halo.defaultEval { initialize = Just LoadRemoteState, finalize = Just PersistRemoteState, handleAction = handleAction }
 ```
 
-`HaloM` is also a monad transformer, and so you can lift any monad `m`  logic into `HaloM`. Just be aware that in order to run the logic, Halo requires that you `hoist` (convert) your chosen monad into `Aff` before returning it.
+`HaloM` is also a monad transformer, and so you can lift any monad `m` logic into `HaloM`. Just be aware that in order to run the logic, Halo requires that you `hoist` (convert) your chosen monad into `Aff` before returning it.
 
 ### Hoisting
 
@@ -113,13 +114,14 @@ Any subscriptions that remain when the component is unmounted are automatically 
 Also provided are functions for creating and killing forks which launch processes in separate "threads" (or as useful an approximation as we can get in JavaScript):
 
 ```purescript
-fork :: forall m action state props. HaloM props state action m Unit -> HaloM props state action m ForkId
+fork :: forall props state action m. HaloM props state action m Unit -> HaloM props state action m ForkId
 
-kill :: forall m action state props. ForkId -> HaloM props state action m Unit
+join :: forall props state action m. ForkId -> HaloM props state action m Unit
+
+kill :: forall props state action m. ForkId -> HaloM props state action m Unit
 ```
 
 Similarly to subscriptions, when the component unmounts all still-running forks will be killed. However new forks _can_ be created during the `Finalize` phase but there is no way of killing them (as with Halogen).
-
 
 ### Parallelism
 
