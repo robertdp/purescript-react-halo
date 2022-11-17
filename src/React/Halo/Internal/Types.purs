@@ -10,8 +10,8 @@ import Prelude
 -- |   `Finalize` event.
 -- | - `Finalize` occurs when the component unmounts.
 data Lifecycle props action
-  = Initialize props
-  | Update props props
+  = Initialize
+  | Update props
   | Action action
   | Finalize
 

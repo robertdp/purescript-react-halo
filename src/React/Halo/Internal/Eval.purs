@@ -85,44 +85,43 @@ evalHaloF hs@(HaloState s) = case _ of
 -- | A simpler interface for building the components eval function. The main lifecycle events map directly into
 -- | actions, so only the action handling logic needs to be written using `HaloM`.
 type EvalSpec props state action m =
-  { onInitialize :: props -> Maybe action
-  , onUpdate :: props -> props -> Maybe action
-  , onAction :: action -> HaloM props state action m Unit
-  , onFinalize :: Maybe action
+  { handleAction :: action -> HaloM props state action m Unit
+  , initialize :: Maybe action
+  , update :: props -> Maybe action
+  , finalize :: Maybe action
   }
 
 -- | The empty `EvalSpec`.
 defaultEval :: forall props action state m. EvalSpec props state action m
 defaultEval =
-  { onInitialize: \_ -> Nothing
-  , onUpdate: \_ _ -> Nothing
-  , onAction: \_ -> pure unit
-  , onFinalize: Nothing
+  { handleAction: \_ -> pure unit
+  , initialize: Nothing
+  , update: \_ -> Nothing
+  , finalize: Nothing
   }
 
 -- | Given an `EvalSpec` builder, it will return an eval function.
 mkEval :: forall props state action m. EvalSpec props state action m -> Lifecycle props action -> HaloM props state action m Unit
 mkEval eval = case _ of
-  Initialize props -> traverse_ eval.onAction $ eval.onInitialize props
-  Update prevProps newProps -> traverse_ eval.onAction $ eval.onUpdate prevProps newProps
-  Action action -> eval.onAction action
-  Finalize -> traverse_ eval.onAction eval.onFinalize
+  Initialize -> traverse_ eval.handleAction $ eval.initialize
+  Update props -> traverse_ eval.handleAction $ eval.update props
+  Action action -> eval.handleAction action
+  Finalize -> traverse_ eval.handleAction eval.finalize
 
 -- | Simple way to run Aff logic asynchronously, while bringing errors back into Effect.
 runAff :: Aff Unit -> Effect Unit
 runAff = Aff.runAff_ (either throwError pure)
 
 runInitialize :: forall props state action. HaloState props action state -> Effect Unit
-runInitialize hs@(HaloState s) = do
-  props <- Ref.read s.props
-  runAff $ evalHaloM hs $ s.eval $ Initialize props
+runInitialize hs@(HaloState s) =
+  runAff $ evalHaloM hs $ s.eval Initialize
 
 handleUpdate :: forall props state action. HaloState props action state -> props -> Effect Unit
 handleUpdate hs@(HaloState s) newProps = do
   prevProps <- Ref.read s.props
   unless (unsafeRefEq newProps prevProps) do
     Ref.write newProps s.props
-    runAff $ evalHaloM hs $ s.eval $ Update prevProps newProps
+    runAff $ evalHaloM hs $ s.eval $ Update prevProps
 
 handleAction :: forall props state action. HaloState props state action -> action -> Effect Unit
 handleAction hs@(HaloState s) action =
