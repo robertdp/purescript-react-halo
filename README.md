@@ -116,8 +116,6 @@ Also provided are functions for creating and killing forks which launch processe
 ```purescript
 fork :: forall props state action m. HaloM props state action m Unit -> HaloM props state action m ForkId
 
-join :: forall props state action m. ForkId -> HaloM props state action m Unit
-
 kill :: forall props state action m. ForkId -> HaloM props state action m Unit
 ```
 

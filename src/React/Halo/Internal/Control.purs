@@ -32,7 +32,6 @@ data HaloF props state action (m :: Type -> Type) a
   | Lift (m a)
   | Par (HaloAp props state action m a)
   | Fork (HaloM props state action m Unit) (ForkId -> a)
-  | Join ForkId a
   | Kill ForkId a
 
 instance functorHaloF :: Functor m => Functor (HaloF props state action m) where
@@ -44,7 +43,6 @@ instance functorHaloF :: Functor m => Functor (HaloF props state action m) where
     Lift m -> Lift (map f m)
     Par par -> Par (map f par)
     Fork m k -> Fork m (map f k)
-    Join fid a -> Join fid (f a)
     Kill fid a -> Kill fid (f a)
 
 -- | The Halo evaluation monad. It lifts the `HaloF` algebra into a free monad.
@@ -130,7 +128,6 @@ hoist nat (HaloM component) = HaloM (hoistFree go component)
     Lift m -> Lift (nat m)
     Par par -> Par (hoistAp nat par)
     Fork m k -> Fork (hoist nat m) k
-    Join fid a -> Join fid a
     Kill fid a -> Kill fid a
 
 -- | Hoist (transform) the base applicative of a `HaloAp` expression.
@@ -164,10 +161,6 @@ unsubscribe sid = HaloM (liftF (Unsubscribe sid unit))
 -- | Returns a `ForkId` for the new process.
 fork :: forall props state action m. HaloM props state action m Unit -> HaloM props state action m ForkId
 fork m = HaloM (liftF (Fork m identity))
-
--- | Join a forked process back into the current "thread".
-join :: forall props state action m. ForkId -> HaloM props state action m Unit
-join fid = HaloM (liftF (Join fid unit))
 
 -- | Kills the process belonging to the `ForkId`.
 kill :: forall props state action m. ForkId -> HaloM props state action m Unit

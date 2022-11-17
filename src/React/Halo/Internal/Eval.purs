@@ -77,10 +77,6 @@ evalHaloF hs@(HaloState s) = case _ of
       unlessM (Ref.read doneRef) do
         Ref.modify_ (Map.insert fid fiber) s.forks
       pure (k fid)
-  Join fid a -> do
-    fiber <- liftEffect $ Map.lookup fid <$> Ref.read s.forks
-    traverse_ Aff.joinFiber fiber
-    pure a
   Kill fid a -> do
     forks <- liftEffect (Ref.read s.forks)
     traverse_ (Aff.killFiber (Aff.error "Cancelled")) (Map.lookup fid forks)
