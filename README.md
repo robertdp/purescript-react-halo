@@ -1,126 +1,177 @@
 # React Halo
 
-Halo is a [Halogen](https://github.com/purescript-halogen/purescript-halogen)-inspired interface for React.
+Halo gives a PureScript React component typed actions, local state, and a safe boundary for application effects. Application logic remains in its own monad; Halo owns the UI work started by a React component.
 
-It is available as a hook: `useHalo`; for building entire components there is `component`.
+Use Halo when several interactions share state or asynchronous work must be cancelled with the component. For one request derived directly from render dependencies, `React.Basic.Hooks.Aff.useAff` is usually simpler.
 
-## Documentation
+## Choose a React entry point
 
-Module documentation is [published on Pursuit](http://pursuit.purescript.org/packages/purescript-react-halo).
-
-## Using with [Spago](https://github.com/purescript/spago)
-
-`$ spago install react-halo`
-or
-`$ npx spago install react-halo`
-
-## What does Halo provide?
-
-Whether you are using the hook or one of the component helpers, the main feature that Halo provides is the `eval` function. It looks like:
+Use `component` when Halo owns the complete component:
 
 ```purescript
-Lifecycle props action -> HaloM props state action m Unit
+profileComponent env =
+  Halo.component "Profile" (runAppM env)
+    { initialState
+    , handlers
+    , onError
+    , render
+    }
 ```
 
-where `Lifecycle` is:
+Use `useHalo` when the render function also uses other hooks:
 
 ```purescript
-data Lifecycle props action
-  = Initialize          -- when the component mounts
-  | Update props        -- when the props change, passing the previous props
-  | Action action       -- when an action is dispatched, passing the action
-  | Finalize            -- when the component unmounts
+halo <- Halo.useHalo (runAppM env)
+  { props
+  , initialState
+  , handlers
+  , onError
+  }
+
+-- halo.state
+-- halo.tasks
+-- halo.dispatch
 ```
 
-The helper `mkEval` exists to make this easier to work with:
+Both entry points receive an interpreter from the application's monad to `Aff`. They expose current component state, an immutable task view, and synchronous action dispatch. `component` also passes current props to its renderer.
+
+## Understand the core model
+
+Actions describe UI events, handlers perform component work, and rendering dispatches the next action:
 
 ```purescript
 data Action
-  = LoadRemoteState
-  | PersistRemoteState
-  | ...
+  = Rename String
+  | LoadProfile
 
-handleAction :: forall props state m. Action -> HaloM props state Action m Unit
+handlers = Halo.defaultHandlers
+  { onAction = case _ of
+      Rename name ->
+        modify_ _ { name = name }
 
-eval = Halo.mkEval Halo.defaultEval { initialize = Just LoadRemoteState, finalize = Just PersistRemoteState, handleAction = handleAction }
+      LoadProfile -> do
+        profile <- lift Profile.load
+        modify_ _ { profile = Just profile }
+  }
 ```
 
-`HaloM` is also a monad transformer, and so you can lift any monad `m` logic into `HaloM`. Just be aware that in order to run the logic, Halo requires that you `hoist` (convert) your chosen monad into `Aff` before returning it.
-
-### Hoisting
+`HaloM props state action m` owns component state and props while preserving application capabilities in `m`:
 
 ```purescript
-hoist :: forall props state action m m'. Functor m => (m ~> m') -> HaloM props state action m ~> HaloM props state action m'
+type UI a = Halo.HaloM Props State Action AppM a
+
+newtype AppM a = AppM (ReaderT Env Aff a)
+
+runAppM :: Env -> AppM ~> Aff
+runAppM env (AppM program) = runReaderT program env
 ```
 
-Example:
+Standard transformer `lift` crosses that boundary. Each dispatched action starts an independent handler, so long-running handlers can overlap. React deactivation fences every handler before requesting cancellation.
+
+Rendering reads state and dispatches actions synchronously:
 
 ```purescript
--- Inverting a reader
-hoistReaderT ::
-  forall props state action env m.
-  HaloM props state action (ReaderT env m) ~>
-  ReaderT env (HaloM props state action m)
-hoistReaderT x = do
-  env <- ask
-  lift (Halo.hoist (flip runReaderT env) x)
+render { state, dispatch } =
+  R.button
+    { onClick: capture_ (dispatch LoadProfile)
+    , children: [ R.text state.name ]
+    }
 ```
 
-### Working with props
+## Choose the ownership mechanism
+
+Start work directly in an action handler. Use a stronger mechanism only when the interaction needs it.
+
+| Need | Use |
+|---|---|
+| Handle one UI event | action handler |
+| Retain typed idle, active, failure, and success state | managed task |
+| Let work outlive its launching handler | component-owned fork |
+| Receive actions from an external event source | emitter subscription |
+| Release another synchronous resource | registered cleanup |
+
+A task stores a typed outcome in component state and renders through the matching task view:
 
 ```purescript
-props :: forall props action state m. HaloM props state action m props
+type State =
+  { search :: Task.State SearchError Results
+  }
+
+searchSlot :: Task.Slot "search" State SearchError Results
+searchSlot = Task.slot (Proxy :: Proxy "search")
+
+Search query -> Task.supersede searchSlot do
+  lift (Search.run query)
+
+case Task.toStatus tasks searchSlot of
+  Task.Idle -> renderPrompt
+  Task.Active -> renderSpinner
+  Task.Failed error -> renderError error
+  Task.Succeeded results -> renderResults results
 ```
 
-Example:
+`Task.slot` uses one type-level label as both record field and identity. Use `Task.slotAt` only for a nested or custom lawful focus. Task bodies remain ordinary `HaloM` values returning `Either error result`.
+
+A fork is an independently cancellable component process:
 
 ```purescript
-fireOnChange ::
-  forall props state action m a.
-  MonadEffect m =>
-  HaloM { onChange :: a -> Effect Unit | props } { value :: a | state } action m Unit
-fireOnChange = do
-  { onChange } <- Halo.props
-  { value } <- Halo.get
-  liftEffect (onChange value)
+fiber <- Halo.fork synchronize
+Halo.kill fiber
 ```
 
-### Working with state
-
-`HaloM` doesn't have any special interface for reading and modifying state, instead providing an instance of [MonadState](https://pursuit.purescript.org/packages/purescript-transformers/docs/Control.Monad.State.Class) for flexibility.
-
-### Subscriptions
-
-Subscriptions registered using these functions are automatically tracked by Halo.
+Subscriptions turn external callbacks into actions:
 
 ```purescript
-subscribe :: forall props state action m. Emitter action -> HaloM props state action m SubscriptionId
-
-unsubscribe :: forall props state action m. SubscriptionId -> HaloM props state action m Unit
+names = Halo.makeEmitter \emit -> source.listen emit
+actions = NameChanged <$> names
+void $ Halo.subscribe actions
 ```
 
-`Emitter` is from the `purescript-halogen-subscriptions` library.
-
-There is also a version for subscriptions that want to unsubscribe themselves:
+Other synchronous resources can register cleanup directly:
 
 ```purescript
-subscribe' :: forall props state action m. (SubscriptionId -> Emitter action) -> HaloM props state action m SubscriptionId
+cleanupId <- Halo.registerCleanup removeListener
+Halo.releaseCleanup cleanupId
 ```
 
-Any subscriptions that remain when the component is unmounted are automatically unsubscribed. This prevents requiring manual clean up in the `Finalize` lifecycle event. Also note that new subscriptions will not be created once the `Finalize` event has been fired.
+React cleanup is synchronous. Put asynchronous release in an Aff finalizer owned by a handler, task, or fork rather than an `onDeactivate` callback.
 
-### Forking
+## Install this unreleased version
 
-Also provided are functions for creating and killing forks which launch processes in separate "threads" (or as useful an approximation as we can get in JavaScript):
+The API on this branch is not published yet; the PureScript Registry currently resolves `react-halo` to v3. This branch uses the PureScript and Spago versions pinned in [`package.json`](package.json).
 
-```purescript
-fork :: forall props state action m. HaloM props state action m Unit -> HaloM props state action m ForkId
+Add a checkout as a local Spago package and declare the dependencies used by your application:
 
-kill :: forall props state action m. ForkId -> HaloM props state action m Unit
+```yaml
+package:
+  dependencies:
+    - aff
+    - console
+    - effect
+    - either
+    - exceptions
+    - prelude
+    - react-basic-dom
+    - react-basic-hooks
+    - react-halo
+    - transformers
+
+workspace:
+  extraPackages:
+    react-halo:
+      path: ../purescript-react-halo
 ```
 
-Similarly to subscriptions, when the component unmounts all still-running forks will be killed. However new forks _can_ be created during the `Finalize` phase but there is no way of killing them (as with Halogen).
+After v4 is published, replace the local override with a registry installation:
 
-### Parallelism
+```console
+spago install aff console effect either exceptions prelude react-basic-dom react-basic-hooks react-halo transformers
+```
 
-Finally `HaloM` provides an instance of `Parallel` for converting back and forth between `HaloAp`, it's applicative counterpart. This allows any logic to be easily converted to run in `parallel` or `sequential`ly.
+`react-basic-dom` is used by the examples, not required by Halo itself. Applications also need the JavaScript packages required by `react-basic-hooks`, including React. Halo has no npm runtime entry point or npm runtime dependencies.
+
+## Documentation
+
+The [guide](docs/guide.md) covers complete usage and ownership choices. Generate exact API documentation from public source comments with `npx spago docs --offline`. Maintainers changing runtime ownership should also read the [architecture notes](docs/architecture.md) and [contributor guide](CONTRIBUTING.md).
+
+Halo does not provide global state, server caching, backpressure queues, or a detached scheduler. The deterministic suite models React setup-cleanup-setup at the runtime boundary; the repository does not yet contain a real DOM/StrictMode mounting fixture.

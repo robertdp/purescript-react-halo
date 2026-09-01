@@ -1,28 +1,57 @@
-module React.Halo.Internal.Types where
+module React.Halo.Internal.Types
+  ( CleanupId(..)
+  , ErrorContext(..)
+  , ForkId(..)
+  , RuntimeId(..)
+  , SubscriptionId(..)
+  ) where
 
 import Prelude
 
--- | The Halo lifecycle events.
--- |
--- | - `Initialize` contains the initial props. It occurs when the component mounts, and only once per component.
--- | - `Update` contains the previous and new props. It occurs when the component re-renders and the props have changes.
--- | - `Action` contains the dispatched action. It occurs each time an action is dispatched to be eval'd, up until the
--- |   `Finalize` event.
--- | - `Finalize` occurs when the component unmounts.
-data Lifecycle props action
-  = Initialize
-  | Update props
-  | Action action
-  | Finalize
+import Effect.Ref (Ref)
 
+-- | Identifies synchronous cleanup in one React activation. Its constructor is
+-- | hidden from the root `React.Halo` API.
+newtype CleanupId = CleanupId Int
+
+derive newtype instance eqCleanupId :: Eq CleanupId
+
+derive newtype instance ordCleanupId :: Ord CleanupId
+
+derive newtype instance showCleanupId :: Show CleanupId
+
+-- | Identifies the component-owned computation or cleanup whose unexpected
+-- | failure reached `onError`.
+-- |
+-- | `PropsChangeError` carries the previous props, `ActionError` carries the
+-- | dispatched action, and `ForkError` carries the component-owned fork ID.
+-- | Halo-initiated cancellation is fenced and is not reported.
+data ErrorContext props action
+  = ActivationError
+  | PropsChangeError props
+  | ActionError action
+  | ForkError ForkId
+  | DeactivationError
+
+-- Runtime identity used only by internal ownership tokens.
+newtype RuntimeId = RuntimeId (Ref Unit)
+
+-- | Identifies a component-owned process created with `fork`. Its constructor
+-- | is hidden from the root `React.Halo` API.
+newtype ForkId = ForkId Int
+
+derive newtype instance eqForkId :: Eq ForkId
+
+derive newtype instance ordForkId :: Ord ForkId
+
+derive newtype instance showForkId :: Show ForkId
+
+-- | Identifies an emitter subscription in one React activation. Its constructor
+-- | is hidden from the root `React.Halo` API.
 newtype SubscriptionId = SubscriptionId Int
 
 derive newtype instance eqSubscriptionId :: Eq SubscriptionId
 
 derive newtype instance ordSubscriptionId :: Ord SubscriptionId
 
-newtype ForkId = ForkId Int
-
-derive newtype instance eqForkId :: Eq ForkId
-
-derive newtype instance ordForkId :: Ord ForkId
+derive newtype instance showSubscriptionId :: Show SubscriptionId

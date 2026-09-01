@@ -1,0 +1,38 @@
+package:
+  name: react-halo
+  publish:
+    version: 4.0.0
+    license: BSD-3-Clause
+    location:
+      githubOwner: robertdp
+      githubRepo: purescript-react-halo
+  dependencies:
+    - aff
+    - avar
+    - effect
+    - either
+    - exceptions
+    - foldable-traversable
+    - maybe
+    - newtype
+    - ordered-collections
+    - parallel
+    - prelude
+    - profunctor-lenses
+    - react-basic-hooks
+    - refs
+    - transformers
+    - tuples
+    - unsafe-reference
+  test:
+    main: Test.Main
+    dependencies:
+      - console
+      - control
+      - exceptions
+      - react-basic-dom
+      - spec
+      - spec-node
+workspace:
+  packageSet:
+    registry: 80.8.0

@@ -1,0 +1,191 @@
+module Test.Halo.RuntimeSpec (spec) where
+
+import Prelude
+
+import Control.Monad.Reader (ReaderT(..), ask, runReaderT)
+import Control.Monad.State (modify_)
+import Control.Monad.Trans.Class (lift)
+import Control.Parallel (parallel, sequential)
+import Data.Tuple (Tuple(..))
+import Effect.Aff (Aff)
+import Effect.Aff as Aff
+import Effect.Aff.AVar as AVar
+import Effect.Aff.Class (class MonadAff, liftAff)
+import Effect.AVar (AVar)
+import Effect.AVar as EffectAVar
+import Effect.Class (class MonadEffect, liftEffect)
+import Effect.Ref as Ref
+import React.Halo.Handlers (Handlers, defaultHandlers)
+import React.Halo.Internal.Runtime (Runtime, activate, createRuntime, deactivate, dispatch, fork, kill, syncSpec)
+import React.Halo.Internal.Types (ForkId)
+import Test.Halo.Helpers (Gate, await, makeGate, release, waitForGate)
+import Test.Spec (Spec, describe, it)
+import Test.Spec.Assertions (shouldEqual)
+
+newtype AppM a = AppM (ReaderT Int Aff a)
+
+derive newtype instance functorAppM :: Functor AppM
+derive newtype instance applyAppM :: Apply AppM
+derive newtype instance applicativeAppM :: Applicative AppM
+derive newtype instance bindAppM :: Bind AppM
+derive newtype instance monadAppM :: Monad AppM
+derive newtype instance monadEffectAppM :: MonadEffect AppM
+derive newtype instance monadAffAppM :: MonadAff AppM
+
+runAppM :: Int -> AppM ~> Aff
+runAppM environment (AppM computation) = runReaderT computation environment
+
+readEnvironment :: AppM Int
+readEnvironment = AppM ask
+
+catchGateCancellation :: Gate -> AppM Unit
+catchGateCancellation gate = AppM $ ReaderT \_ ->
+  Aff.catchError (waitForGate gate) (\_ -> pure unit)
+
+writeExternalWitness :: Ref.Ref Boolean -> AppM Unit
+writeExternalWitness witness = AppM $ ReaderT \_ ->
+  liftEffect $ Ref.write true witness
+
+data Action
+  = ReadEnvironment Gate (AVar Int)
+  | LaunchSnapshotFork Gate Gate (AVar Int)
+  | LaunchCancellableLift Gate (Ref.Ref Boolean) (AVar ForkId) (AVar Unit)
+  | KillLift ForkId (AVar Unit)
+  | RunParallel Gate Gate (AVar Unit)
+
+type State = Int
+
+handlers :: Handlers Unit State Action AppM
+handlers = defaultHandlers
+  { onAction = case _ of
+      ReadEnvironment gate completed -> do
+        liftAff $ waitForGate gate
+        environment <- lift readEnvironment
+        liftAff $ void $ AVar.tryPut environment completed
+      LaunchSnapshotFork handlerGate childGate completed -> do
+        liftAff $ waitForGate handlerGate
+        void $ fork do
+          liftAff $ waitForGate childGate
+          environment <- lift readEnvironment
+          liftAff $ void $ AVar.tryPut environment completed
+      LaunchCancellableLift gate witness forkId completed -> do
+        childId <- fork do
+          lift $ catchGateCancellation gate
+          lift $ writeExternalWitness witness
+        liftAff $ void $ AVar.tryPut childId forkId
+        liftAff $ void $ AVar.tryPut unit completed
+      KillLift childId completed -> do
+        kill childId
+        liftAff $ void $ AVar.tryPut unit completed
+      RunParallel left right completed -> do
+        Tuple a b <- sequential ado
+          a <- parallel do
+            liftAff $ waitForGate left
+            pure 1
+          b <- parallel do
+            liftAff $ waitForGate right
+            pure 2
+          in Tuple a b
+        modify_ (\state -> state + a + b)
+        liftAff $ void $ AVar.tryPut unit completed
+  }
+
+makeRuntime
+  :: Int
+  -> Aff
+       { runtime :: Runtime Unit State Action AppM
+       , state :: Ref.Ref State
+       }
+makeRuntime environment = liftEffect do
+  state <- Ref.new 0
+  runtime <- createRuntime (runAppM environment)
+    { initialProps: unit
+    , initialState: 0
+    , spec: { handlers, onError: \_ _ -> pure unit }
+    , stateUpdate: \next _ -> Ref.write next state
+    }
+  activate runtime
+  pure { runtime, state }
+
+spec :: Spec Unit
+spec = describe "application monad and parallelism" do
+  it "lifts AppM and snapshots the interpreter for each root" do
+    { runtime, state } <- makeRuntime 1
+    Aff.finally (liftEffect $ deactivate runtime) do
+      firstGate <- liftEffect makeGate
+      firstResult <- liftEffect EffectAVar.empty
+      liftEffect $ dispatch runtime (ReadEnvironment firstGate firstResult)
+      void $ await "first root start" firstGate.started
+
+      liftEffect $ syncSpec runtime (runAppM 2)
+        { spec: { handlers, onError: \_ _ -> pure unit }
+        , stateUpdate: \next _ -> Ref.write next state
+        }
+
+      secondGate <- liftEffect makeGate
+      secondResult <- liftEffect EffectAVar.empty
+      liftEffect $ dispatch runtime (ReadEnvironment secondGate secondResult)
+      void $ await "second root start" secondGate.started
+
+      release firstGate
+      release secondGate
+      first <- await "first environment" firstResult
+      second <- await "second environment" secondResult
+      first `shouldEqual` 1
+      second `shouldEqual` 2
+
+  it "gives a later fork its launching handler's interpreter snapshot" do
+    { runtime, state } <- makeRuntime 1
+    Aff.finally (liftEffect $ deactivate runtime) do
+      handlerGate <- liftEffect makeGate
+      childGate <- liftEffect makeGate
+      childResult <- liftEffect EffectAVar.empty
+      liftEffect $ dispatch runtime (LaunchSnapshotFork handlerGate childGate childResult)
+      void $ await "snapshot handler start" handlerGate.started
+
+      liftEffect $ syncSpec runtime (runAppM 2)
+        { spec: { handlers, onError: \_ _ -> pure unit }
+        , stateUpdate: \next _ -> Ref.write next state
+        }
+
+      release handlerGate
+      void $ await "snapshot child start" childGate.started
+      release childGate
+      result <- await "snapshot child environment" childResult
+      result `shouldEqual` 1
+
+  it "rejects a freshly lifted AppM effect after kill fences its fork" do
+    { runtime } <- makeRuntime 1
+    Aff.finally (liftEffect $ deactivate runtime) do
+      gate <- liftEffect makeGate
+      witness <- liftEffect $ Ref.new false
+      forkId <- liftEffect EffectAVar.empty
+      launched <- liftEffect EffectAVar.empty
+      killed <- liftEffect EffectAVar.empty
+      liftEffect $ dispatch runtime (LaunchCancellableLift gate witness forkId launched)
+      childId <- await "cancellable AppM fork id" forkId
+      void $ await "cancellable AppM fork launch" launched
+      void $ await "cancellable AppM effect start" gate.started
+
+      liftEffect $ dispatch runtime (KillLift childId killed)
+      void $ await "cancellable AppM fork kill" killed
+      void $ await "cancelled AppM effect settlement" gate.settled
+      changed <- liftEffect $ Ref.read witness
+      changed `shouldEqual` false
+
+  it "runs Halo branches concurrently with the direct Parallel instance" do
+    { runtime, state } <- makeRuntime 1
+    Aff.finally (liftEffect $ deactivate runtime) do
+      left <- liftEffect makeGate
+      right <- liftEffect makeGate
+      completed <- liftEffect EffectAVar.empty
+
+      liftEffect $ dispatch runtime (RunParallel left right completed)
+      void $ await "left parallel branch" left.started
+      void $ await "right parallel branch" right.started
+
+      release left
+      release right
+      void $ await "parallel handler completion" completed
+      value <- liftEffect $ Ref.read state
+      value `shouldEqual` 3

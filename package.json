@@ -1,23 +1,20 @@
 {
   "name": "purescript-react-halo",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "version": "4.0.0",
+  "description": "Scoped action handling and application effects for PureScript React components",
   "scripts": {
     "build": "spago build",
-    "docs": "rimraf ./output/React.Halo.* && spago docs --format markdown",
-    "postinstall": "spago install",
-    "test": "spago test --config ./spago.test.dhall"
+    "format": "npx --yes purs-tidy@0.11.1 format-in-place src test",
+    "format:check": "npx --yes purs-tidy@0.11.1 check src test",
+    "test": "spago test"
   },
-  "author": "",
-  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/robertdp/purescript-react-halo.git"
+  },
+  "license": "BSD-3-Clause",
   "devDependencies": {
-    "bower": "^1.8.14",
-    "pulp": "^16.0.2",
-    "purescript": "^0.15.4",
-    "purescript-psa": "^0.8.2",
-    "purs-tidy": "^0.9.0",
-    "rimraf": "^3.0.2",
-    "spago": "^0.20.9"
+    "purescript": "0.15.16",
+    "spago": "1.0.4"
   }
 }
