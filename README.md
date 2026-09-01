@@ -28,8 +28,6 @@ package:
     - effect
     - either
     - exceptions
-    - foldable-traversable
-    - maybe
     - prelude
     - profunctor-lenses
     - react-basic-dom
@@ -46,7 +44,7 @@ workspace:
 After v4 is published, the local override can be replaced with:
 
 ```console
-spago install aff console effect either exceptions foldable-traversable maybe prelude profunctor-lenses react-basic-dom react-basic-hooks react-halo transformers
+spago install aff console effect either exceptions prelude profunctor-lenses react-basic-dom react-basic-hooks react-halo transformers
 ```
 
 `react-basic-dom` is used by this example, not required by Halo itself. Your application also needs the JavaScript packages required by `react-basic-hooks`, including React. Halo has no npm runtime entry point or npm runtime dependencies.
