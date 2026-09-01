@@ -5,11 +5,11 @@ module Test.Halo.Helpers
   , Key(..)
   , await
   , awaitCounts
+  , handlers
   , makeGate
   , makeHarness
-  , policyOf
   , release
-  , runAction
+  , runGate
   , shouldNotHaveStarted
   , withHarness
   ) where
@@ -26,33 +26,40 @@ import Effect.Aff (Aff, Milliseconds(..))
 import Effect.Aff as Aff
 import Effect.Aff.AVar as AVar
 import Effect.Aff.Class (liftAff)
-import Effect.Class (liftEffect)
-import Effect.Exception (message)
 import Effect.AVar (AVar)
 import Effect.AVar as EffectAVar
+import Effect.Class (liftEffect)
+import Effect.Exception (message)
 import Effect.Ref (Ref)
 import Effect.Ref as Ref
-import React.Halo.Internal.Runtime (HaloM, Runtime, activate, createRuntime, deactivate)
-import React.Halo.Internal.Types (Activity, ErrorContext(..), Lifecycle(..), TaskCounts, TaskPolicy(..), activityTotals, emptyActivity)
+import React.Halo.Handlers (Handlers, defaultHandlers)
+import React.Halo.Internal.Runtime (HaloM, Runtime, activate, cancelTask, createRuntime, deactivate, fork, startTask)
+import React.Halo.Internal.Types (Activity, ErrorContext(..), TaskCounts, TaskPolicy, activityTotals, emptyActivity)
 import Test.Spec.Assertions (fail, shouldEqual)
 
 data Key = Search | Save
 
 derive instance eqKey :: Eq Key
 derive instance ordKey :: Ord Key
+
 instance showKey :: Show Key where
   show Search = "Search"
   show Save = "Save"
 
 type Gate =
-  { release :: AVar Unit
+  { launched :: AVar Unit
+  , release :: AVar Unit
   , settled :: AVar Unit
   , started :: AVar Unit
   }
 
 data Action
-  = Work (TaskPolicy Key) Int Gate
+  = StartTask (TaskPolicy Key) Int Gate
+  | StartTaskWithWitness (TaskPolicy Key) Int Gate Gate
+  | CancelTask Key (AVar Unit)
+  | Direct Int Gate
   | Boom Gate
+  | TaskBoom (TaskPolicy Key) Gate
 
 type Harness =
   { activity :: Ref (Activity Key)
@@ -65,31 +72,56 @@ type Harness =
 
 makeGate :: Effect Gate
 makeGate = do
+  launched <- EffectAVar.empty
   started <- EffectAVar.empty
   releaseGate <- EffectAVar.empty
   settled <- EffectAVar.empty
-  pure { started, release: releaseGate, settled }
+  pure { launched, started, release: releaseGate, settled }
 
-policyOf :: Action -> TaskPolicy Key
-policyOf = case _ of
-  Work policy _ _ -> policy
-  Boom _ -> Every
+runGate
+  :: forall props action key
+   . Int
+  -> Gate
+  -> HaloM props (Array Int) action key Unit
+runGate value gate = do
+  liftAff $ Aff.finally
+    (void $ AVar.tryPut unit gate.settled)
+    do
+      AVar.put unit gate.started
+      void $ AVar.take gate.release
+  modify_ (flip Array.snoc value)
 
-runAction :: Lifecycle Unit Action -> HaloM Unit (Array Int) Action Key Unit
-runAction = case _ of
-  Action (Work _ value gate) -> do
-    liftAff $ Aff.finally
-      (void $ AVar.tryPut unit gate.settled)
-      do
-        AVar.put unit gate.started
-        void $ AVar.take gate.release
-    modify_ (flip Array.snoc value)
-  Action (Boom gate) ->
-    liftAff $ Aff.finally
-      (void $ AVar.tryPut unit gate.settled)
-      (Aff.throwError (Aff.error "boom"))
-  Activate -> pure unit
-  Update _ -> pure unit
+handlers :: Handlers Unit (Array Int) Action Key
+handlers = defaultHandlers
+  { onAction = case _ of
+      StartTask policy value gate -> do
+        startTask policy (runGate value gate)
+        liftAff $ void $ AVar.tryPut unit gate.launched
+      StartTaskWithWitness policy value gate witness -> do
+        startTask policy (runGate value gate)
+        void $ fork (runGate 999 witness)
+        liftAff $ void $ AVar.take witness.started
+        liftAff $ void $ AVar.tryPut unit gate.launched
+      CancelTask key completed -> do
+        cancelTask key
+        liftAff $ void $ AVar.tryPut unit completed
+      Direct value gate -> do
+        liftAff $ void $ AVar.tryPut unit gate.launched
+        runGate value gate
+      Boom gate -> do
+        liftAff $ void $ AVar.tryPut unit gate.launched
+        liftAff $ Aff.finally
+          (void $ AVar.tryPut unit gate.settled)
+          (Aff.throwError (Aff.error "boom"))
+      TaskBoom policy gate -> do
+        startTask policy do
+          liftAff $ Aff.finally
+            (void $ AVar.tryPut unit gate.settled)
+            do
+              AVar.put unit gate.started
+              Aff.throwError (Aff.error "task boom")
+        liftAff $ void $ AVar.tryPut unit gate.launched
+  }
 
 makeHarness :: Aff Harness
 makeHarness = liftEffect do
@@ -105,11 +137,10 @@ makeHarness = liftEffect do
     , initialProps: unit
     , initialState: []
     , spec:
-        { eval: runAction
+        { handlers
         , onError: \context error -> do
             Ref.modify_ (\current -> Array.snoc current (contextName context <> ": " <> message error)) errors
             void $ EffectAVar.tryPut unit errorRaised
-        , schedule: policyOf
         }
     , stateUpdate: flip Ref.write state
     }
@@ -147,9 +178,10 @@ awaitCounts harness expected = go 20
       void $ await "activity update" harness.activityChanged
       go (remaining - 1)
 
-contextName :: ErrorContext Unit Action -> String
+contextName :: ErrorContext Unit Action Key -> String
 contextName = case _ of
   ActivationError -> "activation"
   DeactivationError -> "deactivation"
-  UpdateError _ -> "update"
+  PropsChangeError _ -> "props"
   ActionError _ -> "action"
+  TaskError _ -> "task"

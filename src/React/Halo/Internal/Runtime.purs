@@ -1,15 +1,16 @@
 module React.Halo.Internal.Runtime
   ( HaloM
+  , Handlers
   , Runtime
-  , RuntimeSpec
   , activate
+  , cancelTask
   , createRuntime
   , deactivate
   , dispatch
   , fork
   , kill
   , props
-  , runForTest
+  , startTask
   , subscribe
   , subscribe'
   , syncSpec
@@ -39,7 +40,7 @@ import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Exception as Exception
 import Effect.Ref (Ref)
 import Effect.Ref as Ref
-import React.Halo.Internal.Types (Activity(..), ErrorContext(..), ForkId(..), Lifecycle(..), SubscriptionId(..), TaskPolicy(..), emptyActivity)
+import React.Halo.Internal.Types (Activity(..), ErrorContext(..), ForkId(..), SubscriptionId(..), TaskPolicy(..), emptyActivity)
 import React.Halo.Subscription (Emitter)
 import React.Halo.Subscription as Subscription
 import Unsafe.Reference (unsafeRefEq)
@@ -57,10 +58,17 @@ derive newtype instance monadHaloM :: Monad (HaloM props state action key)
 derive newtype instance monadEffectHaloM :: MonadEffect (HaloM props state action key)
 derive newtype instance monadAffHaloM :: MonadAff (HaloM props state action key)
 
+-- | Activation, prop-change, and action callbacks. Handlers run immediately as scope-owned
+-- | computations; only work submitted with `startTask` enters the task scheduler.
+type Handlers props state action key =
+  { onActivate :: HaloM props state action key Unit
+  , onAction :: action -> HaloM props state action key Unit
+  , onPropsChange :: props -> HaloM props state action key Unit
+  }
+
 type RuntimeSpec props state action key =
-  { eval :: Lifecycle props action -> HaloM props state action key Unit
-  , onError :: ErrorContext props action -> Error -> Effect Unit
-  , schedule :: action -> TaskPolicy key
+  { handlers :: Handlers props state action key
+  , onError :: ErrorContext props action key -> Error -> Effect Unit
   }
 
 newtype Runtime props state action key = Runtime
@@ -83,9 +91,15 @@ newtype Scope props state action key = Scope
   , tasks :: Ref (Map key (TaskSlot props state action key))
   }
 
+type TaskRequest :: Type -> Type -> Type -> Type -> Type
+type TaskRequest props state action key =
+  { computation :: HaloM props state action key Unit
+  , policy :: TaskPolicy key
+  }
+
 type TaskSlot :: Type -> Type -> Type -> Type -> Type
 type TaskSlot props state action key =
-  { queued :: Array action
+  { queued :: Array (TaskRequest props state action key)
   , running :: Map Int (Root props state action key)
   }
 
@@ -103,7 +117,7 @@ newtype Root props state action key = Root
   }
 
 type Execution props state action key =
-  { context :: ErrorContext props action
+  { context :: ErrorContext props action key
   , owner :: Owner props state action key
   , runtime :: Runtime props state action key
   , scope :: Scope props state action key
@@ -189,7 +203,7 @@ activate runtime@(Runtime state) = do
       let scope = Scope { active, every, generation, roots, subscriptions, tasks }
       Ref.write (Just scope) state.scope
       spec <- Ref.read state.spec
-      startLifecycle runtime scope ActivationError (spec.eval Activate)
+      startHandler runtime scope ActivationError spec.handlers.onActivate
 
 deactivate :: forall props state action key. Ord key => Runtime props state action key -> Effect Unit
 deactivate runtime@(Runtime state) = do
@@ -236,7 +250,7 @@ updateProps runtime@(Runtime state) newProps = do
     traverse_
       ( \scope -> do
           spec <- Ref.read state.spec
-          startLifecycle runtime scope (UpdateError previousProps) (spec.eval (Update previousProps))
+          startHandler runtime scope (PropsChangeError previousProps) (spec.handlers.onPropsChange previousProps)
       )
       activeScope
 
@@ -261,14 +275,46 @@ dispatchToScope runtime@(Runtime state) scope action = do
   current <- isScopeCurrent runtime scope
   when current do
     spec <- Ref.read state.spec
-    schedule runtime scope (spec.schedule action) action
+    startHandler runtime scope (ActionError action) (spec.handlers.onAction action)
 
+-- | Read the latest component props.
 props :: forall props state action key. HaloM props state action key props
 props = HaloM do
   execution <- ask
   let Runtime runtime = execution.runtime
   liftEffect $ Ref.read runtime.props
 
+-- | Submit a component-scoped task and return immediately. The task is owned by
+-- | the active scope rather than by the handler or task that submitted it.
+startTask
+  :: forall props state action key
+   . Ord key
+  => TaskPolicy key
+  -> HaloM props state action key Unit
+  -> HaloM props state action key Unit
+startTask policy computation = HaloM do
+  execution <- ask
+  liftEffect do
+    current <- isCurrent execution
+    when current $
+      scheduleTask execution.runtime execution.scope { computation, policy }
+
+-- | Fence and cancel running tasks for a key and discard every queued task for
+-- | that key. Unkeyed `Every` tasks are unaffected.
+cancelTask
+  :: forall props state action key
+   . Ord key
+  => key
+  -> HaloM props state action key Unit
+cancelTask key = HaloM do
+  execution <- ask
+  liftEffect do
+    current <- isCurrent execution
+    when current $
+      cancelKeyedTasks execution.runtime execution.scope key
+
+-- | Register an emitter in the active component scope. Its cleanup runs on
+-- | manual unsubscription or scope deactivation.
 subscribe
   :: forall props state action key
    . Ord key
@@ -276,6 +322,7 @@ subscribe
   -> HaloM props state action key SubscriptionId
 subscribe = subscribe' <<< const
 
+-- | Like `subscribe`, but provide the allocated identifier to the emitter.
 subscribe'
   :: forall props state action key
    . Ord key
@@ -292,6 +339,8 @@ subscribe' makeEmitter = HaloM do
       Ref.modify_ (Map.insert sid cleanup) scope.subscriptions
     pure sid
 
+-- | Remove a tracked subscription before running its cleanup. A throwing
+-- | cleanup therefore cannot be retried during deactivation.
 unsubscribe
   :: forall props state action key
    . SubscriptionId
@@ -311,6 +360,8 @@ unsubscribe sid = HaloM do
         scope.subscriptions
       traverse_ identity subscription
 
+-- | Start a structured child of the current handler or task. The child is
+-- | cancelled when its parent finishes or is cancelled.
 fork
   :: forall props state action key
    . HaloM props state action key Unit
@@ -329,6 +380,7 @@ fork child = HaloM do
       prepared.start
     pure fid
 
+-- | Cancel a structured child before its parent finishes.
 kill
   :: forall props state action key
    . ForkId
@@ -345,63 +397,59 @@ kill fid = HaloM do
     parent.children
   traverse_ (liftAff <<< cancelRootAff) child
 
--- | Internal test seam: run one computation in a currently active scope. This
--- | is not re-exported by `React.Halo`.
-runForTest
+startHandler
   :: forall props state action key
-   . Ord key
-  => Runtime props state action key
-  -> ErrorContext props action
-  -> HaloM props state action key Unit
-  -> Effect Unit
-runForTest runtime@(Runtime state) context computation = do
-  activeScope <- Ref.read state.scope
-  traverse_ (\scope -> startLifecycle runtime scope context computation) activeScope
-
-startLifecycle
-  :: forall props state action key
-   . Ord key
-  => Runtime props state action key
+   . Runtime props state action key
   -> Scope props state action key
-  -> ErrorContext props action
+  -> ErrorContext props action key
   -> HaloM props state action key Unit
   -> Effect Unit
-startLifecycle runtime scope@(Scope current) context computation = do
+startHandler runtime scope@(Scope current) context computation = do
   runId <- fresh runtime
   prepared <- prepare Nothing runtime scope context computation \_ ->
     Ref.modify_ (Map.delete runId) current.roots
   Ref.modify_ (Map.insert runId prepared.root) current.roots
   prepared.start
 
-schedule
+scheduleTask
   :: forall props state action key
    . Ord key
   => Runtime props state action key
   -> Scope props state action key
-  -> TaskPolicy key
-  -> action
+  -> TaskRequest props state action key
   -> Effect Unit
-schedule runtime scope@(Scope current) policy action = case policy of
+scheduleTask runtime scope@(Scope current) request = case request.policy of
   Every -> do
     runId <- fresh runtime
-    prepared <- prepare Nothing runtime scope (ActionError action) (evalAction runtime action) \_ -> do
+    prepared <- prepare Nothing runtime scope (TaskError request.policy) request.computation \_ -> do
       Ref.modify_ (Map.delete runId) current.every
       notifyActivity runtime scope
     Ref.modify_ (Map.insert runId prepared.root) current.every
     notifyActivity runtime scope
     prepared.start
   Restartable key -> do
-    tasks <- Ref.read current.tasks
-    let previous = maybe mempty (Map.values <<< _.running) (Map.lookup key tasks)
-    Ref.modify_ (Map.insert key { running: Map.empty, queued: [] }) current.tasks
-    traverse_ cancelRoot previous
-    startKeyed runtime scope key action
+    cancelKeyedTasks runtime scope key
+    startKeyed runtime scope key request
   Drop key -> do
     tasks <- Ref.read current.tasks
     let busy = maybe false (\slot -> not Map.isEmpty slot.running || not Array.null slot.queued) (Map.lookup key tasks)
-    unless busy $ startKeyed runtime scope key action
-  Enqueue key -> enqueueOrStart runtime scope key action false
-  KeepLatest key -> enqueueOrStart runtime scope key action true
+    unless busy $ startKeyed runtime scope key request
+  Enqueue key -> enqueueOrStart runtime scope key request false
+  KeepLatest key -> enqueueOrStart runtime scope key request true
+
+cancelKeyedTasks
+  :: forall props state action key
+   . Ord key
+  => Runtime props state action key
+  -> Scope props state action key
+  -> key
+  -> Effect Unit
+cancelKeyedTasks runtime scope@(Scope current) key = do
+  tasks <- Ref.read current.tasks
+  let previous = maybe mempty (Map.values <<< _.running) (Map.lookup key tasks)
+  Ref.modify_ (Map.delete key) current.tasks
+  traverse_ cancelRoot previous
+  notifyActivity runtime scope
 
 startKeyed
   :: forall props state action key
@@ -409,11 +457,11 @@ startKeyed
   => Runtime props state action key
   -> Scope props state action key
   -> key
-  -> action
+  -> TaskRequest props state action key
   -> Effect Unit
-startKeyed runtime scope@(Scope current) key action = do
+startKeyed runtime scope@(Scope current) key request = do
   runId <- fresh runtime
-  prepared <- prepare Nothing runtime scope (ActionError action) (evalAction runtime action) \_ ->
+  prepared <- prepare Nothing runtime scope (TaskError request.policy) request.computation \_ ->
     completeKeyed runtime scope key runId
   Ref.modify_ (Map.alter (Just <<< addRun runId prepared.root <<< maybe emptySlot identity) key) current.tasks
   notifyActivity runtime scope
@@ -425,17 +473,17 @@ enqueueOrStart
   => Runtime props state action key
   -> Scope props state action key
   -> key
-  -> action
+  -> TaskRequest props state action key
   -> Boolean
   -> Effect Unit
-enqueueOrStart runtime scope@(Scope current) key action keepOnlyLatest = do
+enqueueOrStart runtime scope@(Scope current) key request keepOnlyLatest = do
   tasks <- Ref.read current.tasks
   case Map.lookup key tasks of
     Just slot | not Map.isEmpty slot.running -> do
-      let queued = if keepOnlyLatest then [ action ] else Array.snoc slot.queued action
+      let queued = if keepOnlyLatest then [ request ] else Array.snoc slot.queued request
       Ref.modify_ (Map.insert key (slot { queued = queued })) current.tasks
       notifyActivity runtime scope
-    _ -> startKeyed runtime scope key action
+    _ -> startKeyed runtime scope key request
 
 completeKeyed
   :: forall props state action key
@@ -469,7 +517,7 @@ prepare
    . Maybe (Owner props state action key)
   -> Runtime props state action key
   -> Scope props state action key
-  -> ErrorContext props action
+  -> ErrorContext props action key
   -> HaloM props state action key Unit
   -> (Owner props state action key -> Effect Unit)
   -> Effect (Prepared props state action key)
@@ -502,16 +550,6 @@ runHaloM
   -> HaloM props state action key a
   -> Aff a
 runHaloM execution (HaloM computation) = runReaderT computation execution
-
-evalAction
-  :: forall props state action key
-   . Runtime props state action key
-  -> action
-  -> HaloM props state action key Unit
-evalAction (Runtime runtime) action = HaloM do
-  spec <- liftEffect $ Ref.read runtime.spec
-  let HaloM computation = spec.eval (Action action)
-  computation
 
 createOwner
   :: forall props state action key

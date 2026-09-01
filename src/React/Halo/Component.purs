@@ -9,14 +9,15 @@ import Effect (Effect)
 import Effect.Aff (Error)
 import React.Basic.Hooks (Component, JSX)
 import React.Basic.Hooks as React
+import React.Halo.Handlers (Handlers)
 import React.Halo.Hook (useHalo)
-import React.Halo.Internal.Runtime (HaloM)
-import React.Halo.Internal.Types (Activity, ErrorContext, Lifecycle, TaskPolicy)
+import React.Halo.Internal.Types (Activity, ErrorContext)
 
+-- | Complete configuration for a Halo-owned React component.
 type ComponentSpec props state action key =
-  { eval :: Lifecycle props action -> HaloM props state action key Unit
+  { handlers :: Handlers props state action key
   , initialState :: props -> state
-  , onError :: ErrorContext props action -> Error -> Effect Unit
+  , onError :: ErrorContext props action key -> Error -> Effect Unit
   , render ::
       { activity :: Activity key
       , dispatch :: action -> Effect Unit
@@ -24,10 +25,9 @@ type ComponentSpec props state action key =
       , state :: state
       }
       -> JSX
-  , schedule :: action -> TaskPolicy key
   }
 
--- | Build a complete React component around a Halo action runtime.
+-- | Build a complete React component around a Halo action and task runtime.
 component
   :: forall props state action key
    . Ord key
@@ -38,11 +38,10 @@ component name spec =
   React.component name \props -> React.do
     initialState <- React.useMemo unit \_ -> spec.initialState props
     halo <- useHalo
-      { eval: spec.eval
+      { handlers: spec.handlers
       , initialState
       , onError: spec.onError
       , props
-      , schedule: spec.schedule
       }
     pure $ spec.render
       { activity: halo.activity

@@ -12,10 +12,13 @@ import Effect (Effect)
 -- |
 -- | Registration returns the cleanup effect for that receiver. Halo runs the
 -- | cleanup when the subscription is removed or its activation scope ends.
+-- | Emitters broadcast and do not provide consuming-queue or backpressure
+-- | semantics.
 newtype Emitter action = Emitter
   ((action -> Effect Unit) -> Effect (Effect Unit))
 
--- | Create an emitter from registration logic.
+-- | Create an emitter from registration logic. A throwing cleanup is isolated
+-- | from other scope cleanup and reported as `DeactivationError`.
 makeEmitter
   :: forall action
    . ((action -> Effect Unit) -> Effect (Effect Unit))

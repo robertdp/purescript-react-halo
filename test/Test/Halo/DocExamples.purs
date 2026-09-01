@@ -31,19 +31,18 @@ derive instance ordTask :: Ord Task
 loadButton :: Component Props
 loadButton = Halo.component "LoadButton"
   { initialState: \_ -> { loading: false, result: Nothing }
-  , schedule: \Load -> Halo.Restartable GreetingRequest
-  , eval: case _ of
-      Halo.Action Load -> do
-        modify_ _ { loading = true, result = Nothing }
-        Props { loadGreeting } <- Halo.props
-        outcome <- liftAff $ attempt loadGreeting
-        modify_ _
-          { loading = false
-          , result = Just $ case outcome of
-              Left error -> Left (message error)
-              Right greeting -> Right greeting
-          }
-      _ -> pure unit
+  , handlers: Halo.defaultHandlers
+      { onAction = \Load -> Halo.startTask (Halo.Restartable GreetingRequest) do
+          modify_ _ { loading = true, result = Nothing }
+          Props { loadGreeting } <- Halo.props
+          outcome <- liftAff $ attempt loadGreeting
+          modify_ _
+            { loading = false
+            , result = Just $ case outcome of
+                Left error -> Left (message error)
+                Right greeting -> Right greeting
+            }
+      }
   , onError: \context error ->
       Console.error $ "Unexpected Halo failure in " <> showContext context <> ": " <> message error
   , render: \{ state, dispatch, activity } ->
@@ -62,12 +61,13 @@ loadButton = Halo.component "LoadButton"
           ]
   }
 
-showContext :: Halo.ErrorContext Props Action -> String
+showContext :: Halo.ErrorContext Props Action Task -> String
 showContext = case _ of
   Halo.ActivationError -> "activation"
   Halo.DeactivationError -> "deactivation"
-  Halo.UpdateError _ -> "props update"
-  Halo.ActionError Load -> "Load"
+  Halo.PropsChangeError _ -> "props change"
+  Halo.ActionError Load -> "Load action"
+  Halo.TaskError _ -> "greeting task"
 
 data WorkflowAction
   = SearchChanged String
@@ -85,21 +85,23 @@ data WorkflowTask
 derive instance eqWorkflowTask :: Eq WorkflowTask
 derive instance ordWorkflowTask :: Ord WorkflowTask
 
-workflowSchedule :: WorkflowAction -> Halo.TaskPolicy WorkflowTask
-workflowSchedule = case _ of
-  SearchChanged _ -> Halo.Restartable SearchRequest
-  SaveClicked -> Halo.Drop SaveRequest
-  Autosave _ -> Halo.KeepLatest AutosaveRequest
-  UploadChunk fileId _ -> Halo.Enqueue (Upload fileId)
-  RecordMetric _ -> Halo.Every
+handleWorkflow
+  :: WorkflowAction
+  -> Halo.HaloM Unit Unit WorkflowAction WorkflowTask Unit
+handleWorkflow = case _ of
+  SearchChanged _ -> Halo.startTask (Halo.Restartable SearchRequest) (pure unit)
+  SaveClicked -> Halo.startTask (Halo.Drop SaveRequest) (pure unit)
+  Autosave _ -> Halo.startTask (Halo.KeepLatest AutosaveRequest) (pure unit)
+  UploadChunk fileId _ -> Halo.startTask (Halo.Enqueue (Upload fileId)) (pure unit)
+  RecordMetric _ -> Halo.startTask Halo.Every (pure unit)
 
 data SimpleAction = InitializeData
 
 simpleEmitter :: Halo.Emitter SimpleAction
 simpleEmitter = Halo.makeEmitter \_ -> pure (pure unit)
 
-simpleEval :: Halo.Lifecycle Unit SimpleAction -> Halo.HaloM Unit Unit SimpleAction Unit Unit
-simpleEval = Halo.mkEval $ Halo.defaultEval
-  { initialize = Just InitializeData
-  , handleAction = \InitializeData -> pure unit
+simpleHandlers :: Halo.Handlers Unit Unit SimpleAction Unit
+simpleHandlers = Halo.defaultHandlers
+  { onActivate = pure unit
+  , onAction = \InitializeData -> pure unit
   }
