@@ -96,11 +96,9 @@ Capture props before asynchronous work when that work must use one render's valu
 
 ## Store typed task outcomes in component state
 
-Import `React.Halo.Task` qualified when component state should retain the lifecycle and typed result of owned work. Pair each `Task.State error result` field with an opaque branded slot built from a type-level name and standard lens:
+Import `React.Halo.Task` qualified when component state should retain the lifecycle and typed result of owned work. Pair each `Task.State error result` field with an opaque branded slot built from its type-level record label:
 
 ```purescript
-import Data.Lens (Lens')
-import Data.Lens.Record (prop)
 import React.Halo.Task as Task
 import Type.Proxy (Proxy(..))
 
@@ -109,17 +107,16 @@ type State =
   , query :: String
   }
 
-searchLens :: Lens' State (Task.State SearchError Results)
-searchLens = prop (Proxy :: Proxy "search")
-
 searchSlot :: Task.Slot "search" State SearchError Results
-searchSlot = Task.slot (Proxy :: Proxy "search") searchLens
+searchSlot = Task.slot (Proxy :: Proxy "search")
 
 initialState =
   { search: Task.idle searchSlot
   , query: ""
   }
 ```
+
+`Task.slot` derives the record-field lens from the same label used for identity, so ordinary record fields need no separate lens declaration. Use `Task.slotAt` with a custom lawful lens only for a nested focus.
 
 `Task.State` remains ordinary, freely copyable component data; it cannot by itself prove ownership of a live root. `Task.View` validates the canonical slot against an immutable runtime authority snapshot. Copying active state to another slot, restoring stale state, or supplying state from another runtime therefore projects `Idle` and cannot cross-cancel authoritative work.
 

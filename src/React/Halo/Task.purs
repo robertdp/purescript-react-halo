@@ -16,4 +16,4 @@ module React.Halo.Task
   ) where
 
 import React.Halo.Internal.Task (debounce, once, reset, startIfInactive, supersede) as Policies
-import React.Halo.Internal.Task.Types (Slot, State, Status(..), View, _Active, _Failed, _Idle, _Succeeded, idle, isActive, slot, toMaybe, toStatus) as Types
+import React.Halo.Internal.Task.Types (Slot, State, Status(..), View, _Active, _Failed, _Idle, _Succeeded, idle, isActive, slot, slotAt, toMaybe, toStatus) as Types

@@ -29,7 +29,6 @@ package:
     - either
     - exceptions
     - prelude
-    - profunctor-lenses
     - react-basic-dom
     - react-basic-hooks
     - react-halo
@@ -44,7 +43,7 @@ workspace:
 After v4 is published, the local override can be replaced with:
 
 ```console
-spago install aff console effect either exceptions prelude profunctor-lenses react-basic-dom react-basic-hooks react-halo transformers
+spago install aff console effect either exceptions prelude react-basic-dom react-basic-hooks react-halo transformers
 ```
 
 `react-basic-dom` is used by this example, not required by Halo itself. Your application also needs the JavaScript packages required by `react-basic-hooks`, including React. Halo has no npm runtime entry point or npm runtime dependencies.
@@ -75,11 +74,9 @@ loadGreeting = AppM do
   liftAff env.loadGreeting
 ```
 
-Define component state and an action ADT. Import `React.Halo.Task` qualified and locate its abstract state with a standard lens:
+Define component state and an action ADT. Import `React.Halo.Task` qualified and bind each abstract task field by its record label:
 
 ```purescript
-import Data.Lens (Lens')
-import Data.Lens.Record (prop)
 import React.Halo.Task as Task
 import Type.Proxy (Proxy(..))
 
@@ -89,11 +86,8 @@ type State =
   { greeting :: Task.State String String
   }
 
-greetingLens :: Lens' State (Task.State String String)
-greetingLens = prop (Proxy :: Proxy "greeting")
-
 greetingSlot :: Task.Slot "greeting" State String String
-greetingSlot = Task.slot (Proxy :: Proxy "greeting") greetingLens
+greetingSlot = Task.slot (Proxy :: Proxy "greeting")
 
 data Action = Load | Cancel
 
@@ -110,7 +104,7 @@ handlers = Halo.defaultHandlers
   }
 ```
 
-A slot is an opaque identity-bearing optic for one task field. The type-level name distinguishes same-typed fields; it does not store a body, input, or cancellation key. A task body is ordinary `HaloM` and returns `Either error result`. `supersede` makes the new invocation authoritative immediately; `reset` cancels active work and waits for its Aff finalizers.
+A slot is an opaque identity-bearing optic for one task field. `Task.slot` uses the type-level name as both the record label and task identity, so the common case needs no separate lens. `Task.slotAt` accepts a custom lawful lens for a nested focus. A slot does not store a body, input, or cancellation key. A task body is ordinary `HaloM` and returns `Either error result`. `supersede` makes the new invocation authoritative immediately; `reset` cancels active work and waits for its Aff finalizers.
 
 `lift` is `Control.Monad.Trans.Class.lift`. Each handler captures the interpreter current when it starts. Managed tasks and forks inherit their launching handler's interpreter, even if React renders with a newer interpreter before their bodies begin.
 

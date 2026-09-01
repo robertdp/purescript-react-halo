@@ -5,8 +5,6 @@ import Prelude
 import Control.Monad.Reader (ReaderT, ask, runReaderT)
 import Control.Monad.Trans.Class (lift)
 import Data.Either (Either(..))
-import Data.Lens (Lens')
-import Data.Lens.Record (prop)
 import Effect.Aff (Aff)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect)
@@ -45,11 +43,8 @@ type State =
   { greeting :: Task.State String String
   }
 
-greetingLens :: Lens' State (Task.State String String)
-greetingLens = prop (Proxy :: Proxy "greeting")
-
 greetingSlot :: Task.Slot "greeting" State String String
-greetingSlot = Task.slot (Proxy :: Proxy "greeting") greetingLens
+greetingSlot = Task.slot (Proxy :: Proxy "greeting")
 
 data Action
   = Load

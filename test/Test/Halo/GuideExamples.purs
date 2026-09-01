@@ -6,8 +6,6 @@ import Control.Monad.State (modify_)
 import Control.Monad.Trans.Class (lift)
 import Control.Parallel (parallel, sequential)
 import Data.Either (Either(..))
-import Data.Lens (Lens')
-import Data.Lens.Record (prop)
 import Data.Tuple (Tuple(..))
 import Effect.Aff (Aff, Milliseconds(..))
 import React.Halo as Halo
@@ -48,11 +46,8 @@ type SearchState =
 
 data SearchAction = Search String | CancelSearch
 
-searchLens :: Lens' SearchState (Task.State String Int)
-searchLens = prop (Proxy :: Proxy "search")
-
 searchSlot :: Task.Slot "search" SearchState String Int
-searchSlot = Task.slot (Proxy :: Proxy "search") searchLens
+searchSlot = Task.slot (Proxy :: Proxy "search")
 
 retryingSearch :: String -> Aff (Either String Int)
 retryingSearch _ = pure (Right 1)

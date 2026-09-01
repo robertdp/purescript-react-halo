@@ -41,19 +41,19 @@ taskLens :: Lens' ComponentState (Task.State String Int)
 taskLens = prop (Proxy :: Proxy "task")
 
 taskSlot :: Task.Slot "task" ComponentState String Int
-taskSlot = Task.slot (Proxy :: Proxy "task") taskLens
+taskSlot = Task.slot (Proxy :: Proxy "task")
 
 otherLens :: Lens' ComponentState (Task.State String Int)
 otherLens = prop (Proxy :: Proxy "other")
 
 otherSlot :: Task.Slot "other" ComponentState String Int
-otherSlot = Task.slot (Proxy :: Proxy "other") otherLens
+otherSlot = Task.slot (Proxy :: Proxy "other")
 
 sameBrandOtherSlot :: Task.Slot "task" ComponentState String Int
-sameBrandOtherSlot = Task.slot (Proxy :: Proxy "task") otherLens
+sameBrandOtherSlot = Task.slotAt (Proxy :: Proxy "task") otherLens
 
 differentBrandTaskSlot :: Task.Slot "alias" ComponentState String Int
-differentBrandTaskSlot = Task.slot (Proxy :: Proxy "alias") taskLens
+differentBrandTaskSlot = Task.slotAt (Proxy :: Proxy "alias") taskLens
 
 data Body
   = WaitBody Gate (Either String Int)
@@ -872,11 +872,8 @@ readEnvironment = AppM ask
 
 type SnapshotState = { task :: Task.State String Int }
 
-snapshotLens :: Lens' SnapshotState (Task.State String Int)
-snapshotLens = prop (Proxy :: Proxy "task")
-
-snapshotSlot :: Task.Slot "snapshot" SnapshotState String Int
-snapshotSlot = Task.slot (Proxy :: Proxy "snapshot") snapshotLens
+snapshotSlot :: Task.Slot "task" SnapshotState String Int
+snapshotSlot = Task.slot (Proxy :: Proxy "task")
 
 data SnapshotAction = LaunchSnapshot Gate Gate (AVar Int)
 

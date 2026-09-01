@@ -24,6 +24,7 @@ module React.Halo.Internal.Task.Types
   , sameBindingFocus
   , sameToken
   , slot
+  , slotAt
   , slotBrand
   , statusAt
   , toMaybe
@@ -35,6 +36,7 @@ import Prelude
 
 import Data.Either (Either(..))
 import Data.Lens (ALens', Prism', prism', withLens)
+import Data.Lens.Record (prop)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..))
@@ -42,6 +44,7 @@ import Data.Symbol (class IsSymbol, reflectSymbol)
 import Effect (Effect)
 import Effect.Ref (Ref)
 import Effect.Ref as Ref
+import Prim.Row as Row
 import React.Halo.Internal.Types (ForkId, RuntimeId(..))
 import Type.Proxy (Proxy)
 import Unsafe.Reference (unsafeRefEq)
@@ -118,18 +121,28 @@ newtype Binding state = Binding
   , sees :: Probe -> state -> Boolean
   }
 
--- | Construct a branded task slot from a type-level name and lawful lens.
+-- | Construct a task slot for the record field named by the type-level label.
+-- | The same label supplies both the slot brand and its lawful record lens.
+slot
+  :: forall name row componentRow error result
+   . IsSymbol name
+  => Row.Cons name (State error result) row componentRow
+  => Proxy name
+  -> Slot name (Record componentRow) error result
+slot proxy = slotAt proxy (prop proxy)
+
+-- | Construct a branded task slot for a nested or custom lawful focus.
 -- |
 -- | On first policy use, a runtime binds the brand to the lens focus. Reusing a
 -- | brand at another focus or another brand at the same focus fails in the
 -- | calling root's existing error context before mutation or cancellation.
-slot
+slotAt
   :: forall name componentState error result
    . IsSymbol name
   => Proxy name
   -> ALens' componentState (State error result)
   -> Slot name componentState error result
-slot proxy target = withLens target \get set ->
+slotAt proxy target = withLens target \get set ->
   let
     brand = reflectSymbol proxy
     binding = Binding
