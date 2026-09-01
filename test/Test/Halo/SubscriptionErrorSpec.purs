@@ -18,7 +18,7 @@ import Effect.Ref as Ref
 import React.Halo.Handlers (Handlers, defaultHandlers)
 import React.Halo.Internal.Runtime (Runtime, activate, createRuntime, deactivate, dispatch, fork, registerCleanup, releaseCleanup, subscribe, syncSpec, unsubscribe)
 import React.Halo.Internal.Types (CleanupId(..), ErrorContext(..), ForkId, SubscriptionId)
-import React.Halo.Subscription (Emitter, makeEmitter)
+import React.Halo.Subscription (Emitter, makeEmitter, runEmitter)
 import Test.Halo.Helpers (Gate, await, makeGate, release, waitForGate)
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual)
@@ -28,6 +28,23 @@ identityAff = identity
 
 spec :: Spec Unit
 spec = describe "subscriptions, cleanup, and errors" do
+  it "maps emitted values while preserving source cleanup" do
+    received <- liftEffect $ Ref.new []
+    cleanupCount <- liftEffect $ Ref.new 0
+    let
+      numbers = makeEmitter \receive -> do
+        receive 1
+        receive 2
+        pure $ Ref.modify_ (_ + 1) cleanupCount
+      actions = (_ + 10) <$> numbers
+    cleanup <- liftEffect $ runEmitter actions \value ->
+      Ref.modify_ (_ <> [ value ]) received
+    liftEffect cleanup
+    actual <- liftEffect $ Ref.read received
+    actual `shouldEqual` [ 11, 12 ]
+    cleaned <- liftEffect $ Ref.read cleanupCount
+    cleaned `shouldEqual` 1
+
   it "releases generic cleanup once and ignores unknown IDs" do
     cleanupCount <- liftEffect $ Ref.new 0
     registered <- liftEffect EffectAVar.empty

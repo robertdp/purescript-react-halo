@@ -4,7 +4,7 @@ module React.Halo.Subscription
   , runEmitter
   ) where
 
-import Prelude (Unit)
+import Prelude (Unit, class Functor, (<<<))
 
 import Effect (Effect)
 
@@ -17,6 +17,12 @@ import Effect (Effect)
 -- | consuming queue or backpressure.
 newtype Emitter action = Emitter
   ((action -> Effect Unit) -> Effect (Effect Unit))
+
+-- | Transform each emitted value before it reaches the receiver. Mapping keeps
+-- | the source's registration and cleanup behavior unchanged.
+instance functorEmitter :: Functor Emitter where
+  map transform (Emitter register) = Emitter \receive ->
+    register (receive <<< transform)
 
 -- | Create an emitter from registration logic. During deactivation, a throwing
 -- | cleanup is isolated from the remaining scope cleanup and reported as
