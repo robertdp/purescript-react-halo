@@ -92,9 +92,9 @@ startSearch query = do
   modify_ _ { searchFiber = Just fiber }
 ```
 
-`Halo.kill id` removes the fork from component tracking, fences its state and capabilities synchronously, requests Aff cancellation, and waits for cancellation and Aff finalizers before returning. Killing an unknown or completed ID does nothing.
+`Halo.kill id` removes the fork from component tracking, fences its state and capabilities synchronously, requests Aff cancellation, and waits for cancellation and Aff finalizers before returning. Killing an unknown or completed ID does nothing. A fork inherits its launching root's application interpreter snapshot, even when a render supplies a newer interpreter before the fork starts.
 
-Deactivation cannot wait asynchronously because React cleanup is synchronous. It fences the whole activation first, attempts every subscription cleanup, and requests cancellation of all remaining handlers and forks. Aff finalizers continue in their cancellation fibers, but they cannot commit Halo state.
+Deactivation cannot wait asynchronously because React cleanup is synchronous. It fences the whole activation first, attempts every subscription cleanup, and requests cancellation of all remaining handlers and forks. Aff finalizers continue in their cancellation fibers, but they cannot commit Halo state or start a newly lifted application effect after the fence.
 
 Cancellation is cooperative. It cannot retract an HTTP request, storage write, callback, or log that already happened. Design external writes for retry and idempotency where needed.
 

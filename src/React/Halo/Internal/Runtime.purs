@@ -71,9 +71,12 @@ derive newtype instance applyHaloAp :: Apply (HaloAp props state action m)
 derive newtype instance applicativeHaloAp :: Applicative (HaloAp props state action m)
 
 instance monadTransHaloM :: MonadTrans (HaloM props state action) where
-  lift value = HaloM $ ReaderT \execution ->
-    case execution.runInAff of
-      RunInAff run -> run value
+  lift value = HaloM $ ReaderT \execution -> do
+    current <- liftEffect $ isCurrent execution
+    if current then
+      case execution.runInAff of
+        RunInAff run -> run value
+    else Aff.throwError scopeCancellationError
 
 -- Public effect capabilities deliberately pass through the application monad.
 instance monadEffectHaloM :: MonadEffect m => MonadEffect (HaloM props state action m) where
@@ -296,7 +299,8 @@ getProps = HaloM $ ReaderT \execution -> do
   liftEffect $ Ref.read runtime.props
 
 -- | Start work owned by the current React activation. The fork may outlive its
--- | launching handler and is cancelled on explicit `kill` or deactivation.
+-- | launching handler, inherits that root's interpreter snapshot, and is
+-- | cancelled on explicit `kill` or deactivation.
 fork
   :: forall props state action m
    . HaloM props state action m Unit
@@ -456,7 +460,10 @@ requestCancel root = Aff.launchAff_ (cancelRootAff root)
 cancelRootAff :: Root -> Aff Unit
 cancelRootAff root@(Root current) = do
   liftEffect $ fenceRoot root
-  Aff.killFiber (Aff.error "Halo scope cancelled") current.fiber
+  Aff.killFiber scopeCancellationError current.fiber
+
+scopeCancellationError :: Error
+scopeCancellationError = Aff.error "Halo scope cancelled"
 
 isCurrent
   :: forall props state action m

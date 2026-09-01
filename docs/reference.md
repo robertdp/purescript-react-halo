@@ -33,6 +33,8 @@ MonadTell output m => MonadTell output (HaloM props state action m)
 MonadThrow error m => MonadThrow error (HaloM props state action m)
 ```
 
+Each `lift` checks the root fence before invoking the captured interpreter. A stale root therefore cannot start a new application effect, even when it catches its initial Aff cancellation.
+
 `HaloAp` is the abstract parallel applicative counterpart:
 
 ```purescript

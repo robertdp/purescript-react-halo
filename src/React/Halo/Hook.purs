@@ -48,8 +48,9 @@ derive instance newtypeUseHalo :: Newtype (UseHalo props state action m hooks) _
 -- | Run Halo inside a `react-basic-hooks` component.
 -- |
 -- | The natural transformation interprets application effects in `m` into the
--- | `Aff` fibers owned by the active React scope. New roots use the latest
--- | interpreter; roots already running retain their starting snapshot.
+-- | `Aff` fibers owned by the active React scope. New handlers use the latest
+-- | interpreter; roots already running retain their starting snapshot, and a
+-- | fork inherits the snapshot of the root that launches it.
 useHalo
   :: forall props state action m
    . (m ~> Aff)

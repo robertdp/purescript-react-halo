@@ -99,7 +99,7 @@ handlers = Halo.defaultHandlers
   }
 ```
 
-`lift` is `Control.Monad.Trans.Class.lift`. The `AppM` value runs through the interpreter captured when that handler or fork started. A new render may supply a new interpreter for later roots without changing one already running.
+`lift` is `Control.Monad.Trans.Class.lift`. A root captures its interpreter when it starts. A fork launched later by that root inherits the same snapshot, even if a newer render has supplied another interpreter; unrelated new handlers use the latest interpreter.
 
 Create the component at the application boundary:
 
