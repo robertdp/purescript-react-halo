@@ -39,7 +39,7 @@ import Effect.Ref as Ref
 import React.Halo as Halo
 import React.Halo.Handlers (Handlers, defaultHandlers)
 import React.Halo.Internal.Runtime (HaloM, Runtime, activate, createRuntime, deactivate, fork)
-import React.Halo.Internal.Types (Activity, ErrorContext(..), TaskCounts, activityTotals, emptyActivity)
+import React.Halo.Internal.Types (Activity, ErrorContext(..), TaskCounts, emptyActivity, totalActivity)
 import Test.Spec.Assertions (fail, shouldEqual)
 
 data Key = Search | Save
@@ -182,7 +182,7 @@ awaitCounts :: Harness -> TaskCounts -> Aff Unit
 awaitCounts harness expected = go 20
   where
   go remaining = do
-    actual <- activityTotals <$> liftEffect (Ref.read harness.activity)
+    actual <- totalActivity <$> liftEffect (Ref.read harness.activity)
     if actual == expected then pure unit
     else if remaining <= 0 then
       fail $ "Expected activity " <> show expected <> " but got " <> show actual

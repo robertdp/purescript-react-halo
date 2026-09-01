@@ -87,7 +87,7 @@ Halo calls this for each React effect activation. Development StrictMode can run
 
 ### `onPropsChange previousProps`
 
-Halo runs this when the props reference changes. The argument is the previous props; read current props with `Halo.props`. Halo always selects callbacks from the latest spec for new work.
+Halo runs this when the props reference changes. The argument is the previous props; read current props with `Halo.getProps`. Halo always selects callbacks from the latest spec for new work.
 
 ### `onAction action`
 
@@ -95,7 +95,7 @@ Halo starts this when rendering code dispatches or a subscription emits an actio
 
 ## Work with state and props
 
-`HaloM props state action key` has `MonadState state`, `MonadEffect`, and `MonadAff` instances. Use ordinary `get`, `put`, and `modify_`. `Halo.props` reads the latest props.
+`HaloM props state action key` has `MonadState state`, `MonadEffect`, and `MonadAff` instances. Use ordinary `get`, `put`, and `modify_`. `Halo.getProps` reads the latest props.
 
 When work becomes stale through replacement, cancellation, or deactivation, later Halo state operations cannot commit. Foreign effects that already occurred cannot be reversed. Capture render- or action-associated values as task input instead of relying on later props:
 
@@ -103,7 +103,7 @@ When work becomes stale through replacement, cancellation, or deactivation, late
 submitTask = Halo.drop SubmitRequest submit
 
 onAction Submit = do
-  { form } <- Halo.props
+  { form } <- Halo.getProps
   Halo.perform submitTask form
 ```
 
@@ -160,7 +160,7 @@ Definitions sharing a key share cancellation. If a task cancels its own key, it 
 ```purescript
 let
   searchCounts = Halo.activity searchTask halo.activity
-  totalCounts = Halo.activityTotals halo.activity
+  totalCounts = Halo.totalActivity halo.activity
 ```
 
 Each count is `{ running, queued }`. Every task is keyed, so totals are the sum of all keyed slots. Definitions sharing a key report the same counts.
@@ -177,7 +177,7 @@ events = Halo.makeEmitter \emit -> do
   pure (source.remove listener)
 ```
 
-`subscribe events` registers an action source in the current activation scope; `unsubscribe id` removes it early. Manual unsubscription removes tracking before cleanup runs. Deactivation attempts every tracked cleanup even when one throws, then reports failures as `DeactivationError`.
+`subscribe events` registers an action source in the current activation scope; `subscribeWithId (\id -> emitterFor id)` exposes the allocated ID during emitter setup; and `unsubscribe id` removes either form early. Manual unsubscription removes tracking before cleanup runs. Deactivation attempts every tracked cleanup even when one throws, then reports failures as `DeactivationError`.
 
 Emitters broadcast without consuming-queue or backpressure semantics. Each emission dispatches an action; the handler may perform a task with the appropriate pressure strategy.
 

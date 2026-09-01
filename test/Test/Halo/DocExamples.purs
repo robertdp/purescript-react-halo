@@ -31,7 +31,7 @@ derive instance ordTaskKey :: Ord TaskKey
 loadGreetingTask :: Halo.Task Props State Action TaskKey Unit
 loadGreetingTask = Halo.restartable GreetingRequest \_ -> do
   modify_ _ { loading = true, result = Nothing }
-  Props { loadGreeting } <- Halo.props
+  Props { loadGreeting } <- Halo.getProps
   outcome <- liftAff $ attempt loadGreeting
   modify_ _
     { loading = false
@@ -124,3 +124,12 @@ simpleHandlers = Halo.defaultHandlers
   { onActivate = pure unit
   , onAction = \InitializeData -> pure unit
   }
+
+simpleSubscription :: Halo.HaloM Unit Unit SimpleAction Unit Unit
+simpleSubscription = void $ Halo.subscribeWithId \_ -> simpleEmitter
+
+totalWorkflowActivity :: Halo.Activity WorkflowTask -> Halo.TaskCounts
+totalWorkflowActivity = Halo.totalActivity
+
+readSimpleState :: Halo.HaloResult Unit SimpleAction Unit -> Unit
+readSimpleState = _.state

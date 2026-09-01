@@ -109,7 +109,7 @@ Activity lookup also takes the task:
 
 ```purescript
 searchCounts = Halo.activity searchTask halo.activity
-totalCounts = Halo.activityTotals halo.activity
+totalCounts = Halo.totalActivity halo.activity
 ```
 
 Every task, including `concurrent`, is keyed. Replace direct key lookup with the task-based helper.
@@ -176,7 +176,7 @@ events = Halo.makeEmitter \emit -> do
   pure (source.remove listener)
 ```
 
-`subscribe`, `subscribe'`, and `unsubscribe` remain. Manual cleanup is removed from tracking before it runs; scope cleanup failures are isolated and reported through `DeactivationError`.
+`subscribe` and `unsubscribe` remain; use the semantic name `subscribeWithId` when emitter setup needs the allocated ID. Manual cleanup is removed from tracking before it runs; scope cleanup failures are isolated and reported through `DeactivationError`.
 
 ## Behavior changes to verify
 

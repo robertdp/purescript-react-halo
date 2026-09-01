@@ -23,8 +23,8 @@ The parameters are component props, Halo state, dispatched actions, application 
 ```purescript
 type Handlers props state action key =
   { onActivate :: HaloM props state action key Unit
-  , onAction :: action -> HaloM props state action key Unit
   , onPropsChange :: props -> HaloM props state action key Unit
+  , onAction :: action -> HaloM props state action key Unit
   }
 
 defaultHandlers :: forall props state action key. Handlers props state action key
@@ -33,8 +33,8 @@ defaultHandlers :: forall props state action key. Handlers props state action ke
 `defaultHandlers` ignores every callback. Handlers are active-scope-owned, concurrent, commit-fenced, and excluded from task activity.
 
 - `onActivate` runs for every React effect activation.
+- `onPropsChange previousProps` starts when the props reference changes; use `getProps` for current props.
 - `onAction` starts for each action dispatched while active.
-- `onPropsChange previousProps` starts when the props reference changes; use `props` for current props.
 
 ## Task definitions
 
@@ -117,19 +117,19 @@ activity
   -> Activity key
   -> TaskCounts
 
-activityTotals :: Activity key -> TaskCounts
+totalActivity :: Activity key -> TaskCounts
 emptyActivity :: Activity key
 ```
 
-`activity task snapshot` reports the task key's slot; same-key definitions report the same counts. `activityTotals` sums every slot. Activity counts only `perform`/`perform_` submissions, not handlers, structured children, or subscriptions.
+`activity task snapshot` reports the task key's slot; same-key definitions report the same counts. `totalActivity` sums every slot. Activity counts only `perform`/`perform_` submissions, not handlers, structured children, or subscriptions.
 
 ## State and props
 
 ```purescript
-props :: HaloM props state action key props
+getProps :: HaloM props state action key props
 ```
 
-Use `MonadState` operations for state. `props` returns the latest component props. State mutation and capability acquisition are commit-fenced when the current owner becomes stale.
+Use `MonadState` operations for state. `getProps` returns the latest component props. State mutation and capability acquisition are commit-fenced when the current owner becomes stale.
 
 ## Structured children
 
@@ -157,7 +157,7 @@ subscribe
   => Emitter action
   -> HaloM props state action key SubscriptionId
 
-subscribe'
+subscribeWithId
   :: Ord key
   => (SubscriptionId -> Emitter action)
   -> HaloM props state action key SubscriptionId
@@ -174,11 +174,11 @@ Emitter registration receives a receiver and returns cleanup. Emissions dispatch
 ```purescript
 data ErrorContext props action key
   = ActivationError
-  | DeactivationError
   | PropsChangeError props
   | ActionError action
   | TaskError key
   | TaskConfigurationError key
+  | DeactivationError
 
 onError :: ErrorContext props action key -> Error -> Effect Unit
 ```
@@ -195,7 +195,7 @@ type HookSpec props state action key =
   , props :: props
   }
 
-type HaloHook state action key =
+type HaloResult state action key =
   { activity :: Activity key
   , dispatch :: action -> Effect Unit
   , state :: state
@@ -204,7 +204,7 @@ type HaloHook state action key =
 useHalo
   :: Ord key
   => HookSpec props state action key
-  -> Hook (UseHalo props state action key) (HaloHook state action key)
+  -> Hook (UseHalo props state action key) (HaloResult state action key)
 ```
 
 The hook synchronizes the latest handlers and React callbacks. Cleanup deactivates its scope; StrictMode reactivation creates a fresh scope while retaining the runtime's key-strategy validation.

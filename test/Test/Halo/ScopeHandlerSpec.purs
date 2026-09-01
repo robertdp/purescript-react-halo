@@ -14,7 +14,7 @@ import Effect.Class (liftEffect)
 import Effect.Ref as Ref
 import React.Halo as Halo
 import React.Halo.Handlers (defaultHandlers)
-import React.Halo.Internal.Runtime (HaloM, Runtime, activate, createRuntime, deactivate, dispatch, fork, props, syncSpec, updateProps)
+import React.Halo.Internal.Runtime (HaloM, Runtime, activate, createRuntime, deactivate, dispatch, fork, getProps, syncSpec, updateProps)
 import Test.Halo.Helpers (Action(..), Gate, Key(..), await, awaitCounts, makeGate, release, shouldNotHaveStarted, withHarness, work)
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual)
@@ -105,7 +105,7 @@ spec = describe "scope and handlers" do
           , spec:
               { handlers: defaultHandlers
                   { onPropsChange = \previous -> do
-                      current <- props
+                      current <- getProps
                       liftAff $ void $ AVar.tryPut (Tuple previous current) changed
                   }
               , onError: \_ _ -> pure unit

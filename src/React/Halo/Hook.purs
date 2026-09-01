@@ -1,5 +1,5 @@
 module React.Halo.Hook
-  ( HaloHook
+  ( HaloResult
   , HookSpec
   , UseHalo(..)
   , useHalo
@@ -30,7 +30,7 @@ type HookSpec props state action key =
   }
 
 -- | State, action dispatch, and explicit task activity exposed to rendering code.
-type HaloHook state action key =
+type HaloResult state action key =
   { activity :: Activity key
   , dispatch :: action -> Effect Unit
   , state :: state
@@ -59,7 +59,7 @@ useHalo
   :: forall props state action key
    . Ord key
   => HookSpec props state action key
-  -> Hook (UseHalo props state action key) (HaloHook state action key)
+  -> Hook (UseHalo props state action key) (HaloResult state action key)
 useHalo { props, initialState, handlers, onError } =
   React.coerceHook React.do
     state /\ setState <- React.useState' initialState

@@ -9,10 +9,10 @@ module React.Halo.Internal.Runtime
   , dispatch
   , fork
   , kill
+  , getProps
   , performTask
-  , props
   , subscribe
-  , subscribe'
+  , subscribeWithId
   , syncSpec
   , unsubscribe
   , updateProps
@@ -64,8 +64,8 @@ derive newtype instance monadAffHaloM :: MonadAff (HaloM props state action key)
 -- | scope-owned computations; only work submitted with `perform` enters the task scheduler.
 type Handlers props state action key =
   { onActivate :: HaloM props state action key Unit
-  , onAction :: action -> HaloM props state action key Unit
   , onPropsChange :: props -> HaloM props state action key Unit
+  , onAction :: action -> HaloM props state action key Unit
   }
 
 type RuntimeSpec props state action key =
@@ -281,8 +281,8 @@ dispatchToScope runtime@(Runtime state) scope action = do
     startHandler runtime scope (ActionError action) (spec.handlers.onAction action)
 
 -- | Read the latest component props.
-props :: forall props state action key. HaloM props state action key props
-props = HaloM do
+getProps :: forall props state action key. HaloM props state action key props
+getProps = HaloM do
   execution <- ask
   let Runtime runtime = execution.runtime
   liftEffect $ Ref.read runtime.props
@@ -334,15 +334,15 @@ subscribe
    . Ord key
   => Emitter action
   -> HaloM props state action key SubscriptionId
-subscribe = subscribe' <<< const
+subscribe = subscribeWithId <<< const
 
--- | Like `subscribe`, but provide the allocated identifier to the emitter.
-subscribe'
+-- | Subscribe while providing the allocated identifier to the emitter.
+subscribeWithId
   :: forall props state action key
    . Ord key
   => (SubscriptionId -> Emitter action)
   -> HaloM props state action key SubscriptionId
-subscribe' makeEmitter = HaloM do
+subscribeWithId makeEmitter = HaloM do
   execution <- ask
   liftEffect do
     sid <- SubscriptionId <$> fresh execution.runtime

@@ -5,7 +5,7 @@ module React.Halo.Internal.Types
   , SubscriptionId(..)
   , TaskCounts
   , activityAtKey
-  , activityTotals
+  , totalActivity
   , emptyActivity
   ) where
 
@@ -21,11 +21,11 @@ import Data.Maybe (Maybe(..))
 -- | configuration conflicts carry the affected task key.
 data ErrorContext props action key
   = ActivationError
-  | DeactivationError
   | PropsChangeError props
   | ActionError action
   | TaskError key
   | TaskConfigurationError key
+  | DeactivationError
 
 -- | Counts of explicit scheduled tasks. Handler and structured-child execution
 -- | is intentionally excluded.
@@ -53,8 +53,8 @@ emptyActivity = Activity
   }
 
 -- | Read total running and queued explicit task counts.
-activityTotals :: forall key. Activity key -> TaskCounts
-activityTotals (Activity activity) = activity.total
+totalActivity :: forall key. Activity key -> TaskCounts
+totalActivity (Activity activity) = activity.total
 
 -- | Internal keyed lookup used by the abstract Task API.
 activityAtKey :: forall key. Ord key => key -> Activity key -> TaskCounts
