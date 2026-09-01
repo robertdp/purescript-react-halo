@@ -14,6 +14,9 @@ import React.Halo.Hook (useHalo)
 import React.Halo.Internal.Types (Activity, ErrorContext)
 
 -- | Complete configuration for a Halo-owned React component.
+-- |
+-- | `initialState` receives the initial props once per mount. Later prop changes
+-- | run `handlers.onPropsChange` and do not recreate state.
 type ComponentSpec props state action key =
   { handlers :: Handlers props state action key
   , initialState :: props -> state

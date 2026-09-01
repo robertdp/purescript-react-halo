@@ -206,7 +206,9 @@ Replacement, cancellation, and deactivation synchronously mark old owners stale,
 
 ## Choose `component` or `useHalo`
 
-Use `Halo.component` when Halo owns the whole component. Its renderer receives props, state, dispatch, and activity. Use `Halo.useHalo` when composing with other hooks:
+Use `Halo.component` when Halo owns the whole component. Its renderer receives props, state, dispatch, and activity. `ComponentSpec.initialState` receives the initial props once per mount; synchronize later prop changes in `onPropsChange` rather than expecting state to be reinitialized.
+
+Use `Halo.useHalo` when composing with other hooks:
 
 ```purescript
 halo <- Halo.useHalo

@@ -21,8 +21,16 @@ Halo v4 targets PureScript 0.15.16 and Spago 1.0.4. It is not published yet; the
 ```yaml
 package:
   dependencies:
-    - react-basic-dom # only needed by this README's renderer
+    - aff
+    - console
+    - either
+    - exceptions
+    - maybe
+    - prelude
+    - react-basic-dom
+    - react-basic-hooks
     - react-halo
+    - transformers
 
 workspace:
   extraPackages:
@@ -33,10 +41,10 @@ workspace:
 After v4 is published:
 
 ```console
-spago install react-halo react-basic-dom
+spago install aff console either exceptions maybe prelude react-basic-dom react-basic-hooks react-halo transformers
 ```
 
-Your application also needs the JavaScript packages required by `react-basic-hooks`, including React. Halo has no npm runtime entry point or npm runtime dependencies.
+This list is intentionally complete for the pasted quick-start module under Spago's pedantic dependency check; an existing React application will already declare several of these packages. `react-basic-dom` is required by the example renderer, not by Halo itself. Your application also needs the JavaScript packages required by `react-basic-hooks`, including React. Halo has no npm runtime entry point or npm runtime dependencies.
 
 ## Quick start: replace a stale request
 
@@ -59,7 +67,7 @@ import React.Basic.DOM.Events (capture_)
 import React.Basic.Hooks (Component)
 import React.Halo as Halo
 
-newtype Props = Props { loadGreeting :: Aff String }
+type Props = { loadGreeting :: Aff String }
 
 type State =
   { loading :: Boolean
@@ -76,7 +84,7 @@ derive instance ordTaskKey :: Ord TaskKey
 loadGreetingTask :: Halo.Task Props State Action TaskKey Unit
 loadGreetingTask = Halo.restartable GreetingRequest \_ -> do
   modify_ _ { loading = true, result = Nothing }
-  Props { loadGreeting } <- Halo.getProps
+  { loadGreeting } <- Halo.getProps
   outcome <- liftAff $ attempt loadGreeting
   modify_ _
     { loading = false

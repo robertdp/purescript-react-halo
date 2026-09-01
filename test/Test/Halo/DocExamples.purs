@@ -14,7 +14,7 @@ import React.Basic.DOM.Events (capture_)
 import React.Basic.Hooks (Component)
 import React.Halo as Halo
 
-newtype Props = Props { loadGreeting :: Aff String }
+type Props = { loadGreeting :: Aff String }
 
 type State =
   { loading :: Boolean
@@ -31,7 +31,7 @@ derive instance ordTaskKey :: Ord TaskKey
 loadGreetingTask :: Halo.Task Props State Action TaskKey Unit
 loadGreetingTask = Halo.restartable GreetingRequest \_ -> do
   modify_ _ { loading = true, result = Nothing }
-  Props { loadGreeting } <- Halo.getProps
+  { loadGreeting } <- Halo.getProps
   outcome <- liftAff $ attempt loadGreeting
   modify_ _
     { loading = false

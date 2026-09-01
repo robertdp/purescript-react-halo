@@ -232,4 +232,4 @@ component
   -> Component props
 ```
 
-Use `component` when Halo owns the whole component. Use `useHalo` when other React hooks share the render function.
+Use `component` when Halo owns the whole component. `initialState` receives the initial props once per mount; later prop changes call `handlers.onPropsChange` and do not reinitialize state. Use `useHalo` when other React hooks share the render function.
