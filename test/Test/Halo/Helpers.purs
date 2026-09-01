@@ -3,6 +3,9 @@ module Test.Halo.Helpers
   , Gate
   , Harness
   , Key(..)
+  , UnitTask
+  , WorkInput
+  , WorkTask
   , await
   , awaitCounts
   , handlers
@@ -12,6 +15,7 @@ module Test.Halo.Helpers
   , runGate
   , shouldNotHaveStarted
   , withHarness
+  , work
   ) where
 
 import Prelude
@@ -32,9 +36,10 @@ import Effect.Class (liftEffect)
 import Effect.Exception (message)
 import Effect.Ref (Ref)
 import Effect.Ref as Ref
+import React.Halo as Halo
 import React.Halo.Handlers (Handlers, defaultHandlers)
-import React.Halo.Internal.Runtime (HaloM, Runtime, activate, cancelTask, createRuntime, deactivate, fork, startTask)
-import React.Halo.Internal.Types (Activity, ErrorContext(..), TaskCounts, TaskPolicy, activityTotals, emptyActivity)
+import React.Halo.Internal.Runtime (HaloM, Runtime, activate, createRuntime, deactivate, fork)
+import React.Halo.Internal.Types (Activity, ErrorContext(..), TaskCounts, activityTotals, emptyActivity)
 import Test.Spec.Assertions (fail, shouldEqual)
 
 data Key = Search | Save
@@ -53,13 +58,22 @@ type Gate =
   , started :: AVar Unit
   }
 
+type WorkInput =
+  { gate :: Gate
+  , value :: Int
+  }
+
+type WorkTask = Halo.Task Unit (Array Int) Action Key WorkInput
+
+type UnitTask = Halo.Task Unit (Array Int) Action Key Unit
+
 data Action
-  = StartTask (TaskPolicy Key) Int Gate
-  | StartTaskWithWitness (TaskPolicy Key) Int Gate Gate
-  | CancelTask Key (AVar Unit)
+  = Perform WorkTask WorkInput
+  | PerformWithWitness WorkTask WorkInput Gate
+  | PerformUnit UnitTask Gate
+  | Cancel WorkTask (AVar Unit)
   | Direct Int Gate
   | Boom Gate
-  | TaskBoom (TaskPolicy Key) Gate
 
 type Harness =
   { activity :: Ref (Activity Key)
@@ -91,19 +105,25 @@ runGate value gate = do
       void $ AVar.take gate.release
   modify_ (flip Array.snoc value)
 
+work :: WorkInput -> HaloM Unit (Array Int) Action Key Unit
+work input = runGate input.value input.gate
+
 handlers :: Handlers Unit (Array Int) Action Key
 handlers = defaultHandlers
   { onAction = case _ of
-      StartTask policy value gate -> do
-        startTask policy (runGate value gate)
-        liftAff $ void $ AVar.tryPut unit gate.launched
-      StartTaskWithWitness policy value gate witness -> do
-        startTask policy (runGate value gate)
+      Perform task input -> do
+        Halo.perform task input
+        liftAff $ void $ AVar.tryPut unit input.gate.launched
+      PerformWithWitness task input witness -> do
+        Halo.perform task input
         void $ fork (runGate 999 witness)
         liftAff $ void $ AVar.take witness.started
+        liftAff $ void $ AVar.tryPut unit input.gate.launched
+      PerformUnit task gate -> do
+        Halo.perform_ task
         liftAff $ void $ AVar.tryPut unit gate.launched
-      CancelTask key completed -> do
-        cancelTask key
+      Cancel task completed -> do
+        Halo.cancel task
         liftAff $ void $ AVar.tryPut unit completed
       Direct value gate -> do
         liftAff $ void $ AVar.tryPut unit gate.launched
@@ -113,14 +133,6 @@ handlers = defaultHandlers
         liftAff $ Aff.finally
           (void $ AVar.tryPut unit gate.settled)
           (Aff.throwError (Aff.error "boom"))
-      TaskBoom policy gate -> do
-        startTask policy do
-          liftAff $ Aff.finally
-            (void $ AVar.tryPut unit gate.settled)
-            do
-              AVar.put unit gate.started
-              Aff.throwError (Aff.error "task boom")
-        liftAff $ void $ AVar.tryPut unit gate.launched
   }
 
 makeHarness :: Aff Harness
@@ -184,4 +196,5 @@ contextName = case _ of
   DeactivationError -> "deactivation"
   PropsChangeError _ -> "props"
   ActionError _ -> "action"
-  TaskError _ -> "task"
+  TaskError key -> "task " <> show key
+  TaskConfigurationError key -> "task configuration " <> show key

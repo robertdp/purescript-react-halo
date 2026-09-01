@@ -3,14 +3,14 @@ module React.Halo.Internal.Runtime
   , Handlers
   , Runtime
   , activate
-  , cancelTask
+  , cancelDefinition
   , createRuntime
   , deactivate
   , dispatch
   , fork
   , kill
+  , performTask
   , props
-  , startTask
   , subscribe
   , subscribe'
   , syncSpec
@@ -40,7 +40,9 @@ import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Exception as Exception
 import Effect.Ref (Ref)
 import Effect.Ref as Ref
-import React.Halo.Internal.Types (Activity(..), ErrorContext(..), ForkId(..), SubscriptionId(..), TaskPolicy(..), emptyActivity)
+import React.Halo.Internal.Task (Strategy(..), Task)
+import React.Halo.Internal.Task as Task
+import React.Halo.Internal.Types (Activity(..), ErrorContext(..), ForkId(..), SubscriptionId(..), emptyActivity)
 import React.Halo.Subscription (Emitter)
 import React.Halo.Subscription as Subscription
 import Unsafe.Reference (unsafeRefEq)
@@ -58,8 +60,8 @@ derive newtype instance monadHaloM :: Monad (HaloM props state action key)
 derive newtype instance monadEffectHaloM :: MonadEffect (HaloM props state action key)
 derive newtype instance monadAffHaloM :: MonadAff (HaloM props state action key)
 
--- | Activation, prop-change, and action callbacks. Handlers run immediately as scope-owned
--- | computations; only work submitted with `startTask` enters the task scheduler.
+-- | Activation, prop-change, and action callbacks. Handlers run immediately as
+-- | scope-owned computations; only work submitted with `perform` enters the task scheduler.
 type Handlers props state action key =
   { onActivate :: HaloM props state action key Unit
   , onAction :: action -> HaloM props state action key Unit
@@ -77,6 +79,7 @@ newtype Runtime props state action key = Runtime
   , props :: Ref props
   , scope :: Ref (Maybe (Scope props state action key))
   , spec :: Ref (RuntimeSpec props state action key)
+  , strategies :: Ref (Map key Strategy)
   , state :: Ref state
   , stateUpdate :: Ref (state -> Effect Unit)
   }
@@ -84,7 +87,6 @@ newtype Runtime props state action key = Runtime
 newtype Scope :: Type -> Type -> Type -> Type -> Type
 newtype Scope props state action key = Scope
   { active :: Ref Boolean
-  , every :: Ref (Map Int (Root props state action key))
   , generation :: Int
   , roots :: Ref (Map Int (Root props state action key))
   , subscriptions :: Ref (Map SubscriptionId (Effect Unit))
@@ -93,9 +95,11 @@ newtype Scope props state action key = Scope
 
 type TaskRequest :: Type -> Type -> Type -> Type -> Type
 type TaskRequest props state action key =
-  { computation :: HaloM props state action key Unit
-  , policy :: TaskPolicy key
-  }
+  { computation :: HaloM props state action key Unit }
+
+data StrategyRegistration
+  = StrategyAccepted
+  | StrategyConflict Strategy
 
 type TaskSlot :: Type -> Type -> Type -> Type -> Type
 type TaskSlot props state action key =
@@ -164,6 +168,7 @@ createRuntime input = do
   scope <- Ref.new Nothing
   spec <- Ref.new input.spec
   state <- Ref.new input.initialState
+  strategies <- Ref.new Map.empty
   stateUpdate <- Ref.new input.stateUpdate
   pure $ Runtime
     { activityUpdate
@@ -172,6 +177,7 @@ createRuntime input = do
     , scope
     , spec
     , state
+    , strategies
     , stateUpdate
     }
 
@@ -196,11 +202,10 @@ activate runtime@(Runtime state) = do
     Nothing -> do
       generation <- fresh runtime
       active <- Ref.new true
-      every <- Ref.new Map.empty
       roots <- Ref.new Map.empty
       subscriptions <- Ref.new Map.empty
       tasks <- Ref.new Map.empty
-      let scope = Scope { active, every, generation, roots, subscriptions, tasks }
+      let scope = Scope { active, generation, roots, subscriptions, tasks }
       Ref.write (Just scope) state.scope
       spec <- Ref.read state.spec
       startHandler runtime scope ActivationError spec.handlers.onActivate
@@ -215,14 +220,12 @@ deactivate runtime@(Runtime state) = do
       Ref.write Nothing state.scope
 
       roots <- takeRef current.roots Map.empty
-      every <- takeRef current.every Map.empty
       tasks <- takeRef current.tasks Map.empty
       subscriptions <- takeRef current.subscriptions Map.empty
 
       publishActivity runtime emptyActivity
       cleanupResults <- traverse Exception.try (Map.values subscriptions)
       traverse_ cancelRoot (Map.values roots)
-      traverse_ cancelRoot (Map.values every)
       traverse_ (traverse_ cancelRoot <<< Map.values <<< _.running) (Map.values tasks)
 
       -- A faulty external cleanup must not prevent the rest of the scope from
@@ -284,34 +287,45 @@ props = HaloM do
   let Runtime runtime = execution.runtime
   liftEffect $ Ref.read runtime.props
 
--- | Submit a component-scoped task and return immediately. The task is owned by
--- | the active scope rather than by the handler or task that submitted it.
-startTask
-  :: forall props state action key
+-- | Internal capability used by the abstract public Task API.
+performTask
+  :: forall props state action key input
    . Ord key
-  => TaskPolicy key
+  => Task (HaloM props state action key) key input
+  -> input
   -> HaloM props state action key Unit
-  -> HaloM props state action key Unit
-startTask policy computation = HaloM do
+performTask task input = HaloM do
   execution <- ask
   liftEffect do
     current <- isCurrent execution
-    when current $
-      scheduleTask execution.runtime execution.scope { computation, policy }
+    when current do
+      configured <- registerStrategy execution.runtime (Task.key task) (Task.strategy task)
+      case configured of
+        StrategyAccepted ->
+          scheduleTask execution.runtime execution.scope (Task.key task) (Task.strategy task)
+            { computation: Task.run task input }
+        StrategyConflict previous -> do
+          let Runtime runtime = execution.runtime
+          spec <- Ref.read runtime.spec
+          spec.onError (TaskConfigurationError (Task.key task))
+            ( Exception.error $
+                "Task key was already defined as " <> Task.strategyName previous
+                  <> " and cannot also be defined as "
+                  <> Task.strategyName (Task.strategy task)
+            )
 
--- | Fence and cancel running tasks for a key and discard every queued task for
--- | that key. Unkeyed `Every` tasks are unaffected.
-cancelTask
-  :: forall props state action key
+-- | Internal capability used by the abstract public Task API.
+cancelDefinition
+  :: forall props state action key input
    . Ord key
-  => key
+  => Task (HaloM props state action key) key input
   -> HaloM props state action key Unit
-cancelTask key = HaloM do
+cancelDefinition task = HaloM do
   execution <- ask
   liftEffect do
     current <- isCurrent execution
     when current $
-      cancelKeyedTasks execution.runtime execution.scope key
+      cancelKeyedTasks execution.runtime execution.scope (Task.key task)
 
 -- | Register an emitter in the active component scope. Its cleanup runs on
 -- | manual unsubscription or scope deactivation.
@@ -411,31 +425,45 @@ startHandler runtime scope@(Scope current) context computation = do
   Ref.modify_ (Map.insert runId prepared.root) current.roots
   prepared.start
 
+registerStrategy
+  :: forall props state action key
+   . Ord key
+  => Runtime props state action key
+  -> key
+  -> Strategy
+  -> Effect StrategyRegistration
+registerStrategy (Runtime runtime) key requested = Ref.modify' update runtime.strategies
+  where
+  update strategies = case Map.lookup key strategies of
+    Nothing ->
+      { state: Map.insert key requested strategies
+      , value: StrategyAccepted
+      }
+    Just existing | existing == requested ->
+      { state: strategies, value: StrategyAccepted }
+    Just existing ->
+      { state: strategies, value: StrategyConflict existing }
+
 scheduleTask
   :: forall props state action key
    . Ord key
   => Runtime props state action key
   -> Scope props state action key
+  -> key
+  -> Strategy
   -> TaskRequest props state action key
   -> Effect Unit
-scheduleTask runtime scope@(Scope current) request = case request.policy of
-  Every -> do
-    runId <- fresh runtime
-    prepared <- prepare Nothing runtime scope (TaskError request.policy) request.computation \_ -> do
-      Ref.modify_ (Map.delete runId) current.every
-      notifyActivity runtime scope
-    Ref.modify_ (Map.insert runId prepared.root) current.every
-    notifyActivity runtime scope
-    prepared.start
-  Restartable key -> do
+scheduleTask runtime scope@(Scope current) key strategy request = case strategy of
+  Concurrent -> startKeyed runtime scope key request
+  Restartable -> do
     cancelKeyedTasks runtime scope key
     startKeyed runtime scope key request
-  Drop key -> do
+  Drop -> do
     tasks <- Ref.read current.tasks
     let busy = maybe false (\slot -> not Map.isEmpty slot.running || not Array.null slot.queued) (Map.lookup key tasks)
     unless busy $ startKeyed runtime scope key request
-  Enqueue key -> enqueueOrStart runtime scope key request false
-  KeepLatest key -> enqueueOrStart runtime scope key request true
+  Enqueue -> enqueueOrStart runtime scope key request false
+  KeepLatest -> enqueueOrStart runtime scope key request true
 
 cancelKeyedTasks
   :: forall props state action key
@@ -461,7 +489,7 @@ startKeyed
   -> Effect Unit
 startKeyed runtime scope@(Scope current) key request = do
   runId <- fresh runtime
-  prepared <- prepare Nothing runtime scope (TaskError request.policy) request.computation \_ ->
+  prepared <- prepare Nothing runtime scope (TaskError key) request.computation \_ ->
     completeKeyed runtime scope key runId
   Ref.modify_ (Map.alter (Just <<< addRun runId prepared.root <<< maybe emptySlot identity) key) current.tasks
   notifyActivity runtime scope
@@ -609,7 +637,6 @@ notifyActivity
 notifyActivity runtime@(Runtime state) scope@(Scope current) = do
   active <- isScopeCurrent runtime scope
   when active do
-    every <- Ref.read current.every
     tasks <- Ref.read current.tasks
     let
       counts slot =
@@ -617,11 +644,8 @@ notifyActivity runtime@(Runtime state) scope@(Scope current) = do
         , queued: Array.length slot.queued
         }
       byKey = map counts tasks
-      keyed = foldl addCounts { running: 0, queued: 0 } (Map.values byKey)
-      activity = Activity
-        { total: keyed { running = keyed.running + Map.size every }
-        , byKey
-        }
+      total = foldl addCounts { running: 0, queued: 0 } (Map.values byKey)
+      activity = Activity { total, byKey }
     update <- Ref.read state.activityUpdate
     update activity
 

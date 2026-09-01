@@ -23,31 +23,33 @@ type State =
 
 data Action = Load
 
-data Task = GreetingRequest
+data TaskKey = GreetingRequest
 
-derive instance eqTask :: Eq Task
-derive instance ordTask :: Ord Task
+derive instance eqTaskKey :: Eq TaskKey
+derive instance ordTaskKey :: Ord TaskKey
+
+loadGreetingTask :: Halo.Task Props State Action TaskKey Unit
+loadGreetingTask = Halo.restartable GreetingRequest \_ -> do
+  modify_ _ { loading = true, result = Nothing }
+  Props { loadGreeting } <- Halo.props
+  outcome <- liftAff $ attempt loadGreeting
+  modify_ _
+    { loading = false
+    , result = Just $ case outcome of
+        Left error -> Left (message error)
+        Right greeting -> Right greeting
+    }
 
 loadButton :: Component Props
 loadButton = Halo.component "LoadButton"
   { initialState: \_ -> { loading: false, result: Nothing }
   , handlers: Halo.defaultHandlers
-      { onAction = \Load -> Halo.startTask (Halo.Restartable GreetingRequest) do
-          modify_ _ { loading = true, result = Nothing }
-          Props { loadGreeting } <- Halo.props
-          outcome <- liftAff $ attempt loadGreeting
-          modify_ _
-            { loading = false
-            , result = Just $ case outcome of
-                Left error -> Left (message error)
-                Right greeting -> Right greeting
-            }
-      }
+      { onAction = \Load -> Halo.perform_ loadGreetingTask }
   , onError: \context error ->
       Console.error $ "Unexpected Halo failure in " <> showContext context <> ": " <> message error
   , render: \{ state, dispatch, activity } ->
       let
-        counts = Halo.activityFor GreetingRequest activity
+        counts = Halo.activity loadGreetingTask activity
       in
         R.div_
           [ R.button
@@ -61,13 +63,14 @@ loadButton = Halo.component "LoadButton"
           ]
   }
 
-showContext :: Halo.ErrorContext Props Action Task -> String
+showContext :: Halo.ErrorContext Props Action TaskKey -> String
 showContext = case _ of
   Halo.ActivationError -> "activation"
   Halo.DeactivationError -> "deactivation"
   Halo.PropsChangeError _ -> "props change"
   Halo.ActionError Load -> "Load action"
-  Halo.TaskError _ -> "greeting task"
+  Halo.TaskError GreetingRequest -> "greeting task"
+  Halo.TaskConfigurationError GreetingRequest -> "greeting task definition"
 
 data WorkflowAction
   = SearchChanged String
@@ -81,19 +84,35 @@ data WorkflowTask
   | SaveRequest
   | AutosaveRequest
   | Upload Int
+  | Metrics
 
 derive instance eqWorkflowTask :: Eq WorkflowTask
 derive instance ordWorkflowTask :: Ord WorkflowTask
+
+searchTask :: Halo.Task Unit Unit WorkflowAction WorkflowTask String
+searchTask = Halo.restartable SearchRequest \_ -> pure unit
+
+saveTask :: Halo.Task Unit Unit WorkflowAction WorkflowTask Unit
+saveTask = Halo.drop SaveRequest \_ -> pure unit
+
+autosaveTask :: Halo.Task Unit Unit WorkflowAction WorkflowTask String
+autosaveTask = Halo.keepLatest AutosaveRequest \_ -> pure unit
+
+uploadTask :: Int -> Halo.Task Unit Unit WorkflowAction WorkflowTask Int
+uploadTask fileId = Halo.enqueue (Upload fileId) \_ -> pure unit
+
+metricTask :: Halo.Task Unit Unit WorkflowAction WorkflowTask String
+metricTask = Halo.concurrent Metrics \_ -> pure unit
 
 handleWorkflow
   :: WorkflowAction
   -> Halo.HaloM Unit Unit WorkflowAction WorkflowTask Unit
 handleWorkflow = case _ of
-  SearchChanged _ -> Halo.startTask (Halo.Restartable SearchRequest) (pure unit)
-  SaveClicked -> Halo.startTask (Halo.Drop SaveRequest) (pure unit)
-  Autosave _ -> Halo.startTask (Halo.KeepLatest AutosaveRequest) (pure unit)
-  UploadChunk fileId _ -> Halo.startTask (Halo.Enqueue (Upload fileId)) (pure unit)
-  RecordMetric _ -> Halo.startTask Halo.Every (pure unit)
+  SearchChanged query -> Halo.perform searchTask query
+  SaveClicked -> Halo.perform_ saveTask
+  Autosave draft -> Halo.perform autosaveTask draft
+  UploadChunk fileId chunk -> Halo.perform (uploadTask fileId) chunk
+  RecordMetric name -> Halo.perform metricTask name
 
 data SimpleAction = InitializeData
 

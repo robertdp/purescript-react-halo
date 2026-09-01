@@ -12,10 +12,10 @@ import Effect.AVar (AVar)
 import Effect.AVar as EffectAVar
 import Effect.Class (liftEffect)
 import Effect.Ref as Ref
+import React.Halo as Halo
 import React.Halo.Handlers (defaultHandlers)
-import React.Halo.Internal.Runtime (HaloM, Runtime, activate, createRuntime, deactivate, dispatch, fork, props, startTask, syncSpec, updateProps)
-import React.Halo.Internal.Types (TaskPolicy(..))
-import Test.Halo.Helpers (Action(..), Gate, Key(..), await, awaitCounts, makeGate, release, shouldNotHaveStarted, withHarness)
+import React.Halo.Internal.Runtime (HaloM, Runtime, activate, createRuntime, deactivate, dispatch, fork, props, syncSpec, updateProps)
+import Test.Halo.Helpers (Action(..), Gate, Key(..), await, awaitCounts, makeGate, release, shouldNotHaveStarted, withHarness, work)
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual)
 
@@ -26,9 +26,10 @@ spec = describe "scope and handlers" do
     queued <- liftEffect makeGate
     ignored <- liftEffect makeGate
 
+    let task = Halo.enqueue Save work
     liftEffect do
-      dispatch harness.runtime (StartTask (Enqueue Save) 1 running)
-      dispatch harness.runtime (StartTask (Enqueue Save) 2 queued)
+      dispatch harness.runtime (Perform task { value: 1, gate: running })
+      dispatch harness.runtime (Perform task { value: 2, gate: queued })
     void $ await "running task before deactivation" running.started
     awaitCounts harness { running: 1, queued: 1 }
 
@@ -37,7 +38,8 @@ spec = describe "scope and handlers" do
     awaitCounts harness { running: 0, queued: 0 }
     shouldNotHaveStarted queued
 
-    liftEffect $ dispatch harness.runtime (StartTask Every 3 ignored)
+    let ignoredTask = Halo.concurrent Search work
+    liftEffect $ dispatch harness.runtime (Perform ignoredTask { value: 3, gate: ignored })
     shouldNotHaveStarted ignored
     state <- liftEffect $ Ref.read harness.state
     state `shouldEqual` []
@@ -45,7 +47,7 @@ spec = describe "scope and handlers" do
     reactivated <- liftEffect makeGate
     liftEffect do
       activate harness.runtime
-      dispatch harness.runtime (StartTask Every 4 reactivated)
+      dispatch harness.runtime (Perform ignoredTask { value: 4, gate: reactivated })
     void $ await "task start after reactivation" reactivated.started
     release reactivated
     void $ await "task completion after reactivation" reactivated.settled
@@ -195,17 +197,8 @@ spec = describe "scope and handlers" do
       , spec:
           { handlers: defaultHandlers
               { onAction = case _ of
-                  ParentTask parent child -> startTask (Restartable unit) do
-                    void $ fork do
-                      runIntGate child
-                      modify_ (_ + 100)
-                    liftAff $ void $ AVar.take child.started
-                    runIntGate parent
-                    modify_ (_ + 1)
-                  ReplacementTask gate completed -> startTask (Restartable unit) do
-                    runIntGate gate
-                    modify_ (_ + 10)
-                    liftAff $ void $ AVar.tryPut unit completed
+                  ParentTask parent child -> Halo.perform parentTask (ParentWork parent child)
+                  ReplacementTask gate completed -> Halo.perform parentTask (ReplacementWork gate completed)
               }
           , onError: \_ _ -> pure unit
           }
@@ -267,6 +260,24 @@ data ForkAction = ForkAndReturn Gate (AVar Unit)
 data ParentAction
   = ParentTask Gate Gate
   | ReplacementTask Gate (AVar Unit)
+
+data ParentInput
+  = ParentWork Gate Gate
+  | ReplacementWork Gate (AVar Unit)
+
+parentTask :: Halo.Task Unit Int ParentAction Unit ParentInput
+parentTask = Halo.restartable unit case _ of
+  ParentWork parent child -> do
+    void $ fork do
+      runIntGate child
+      modify_ (_ + 100)
+    liftAff $ void $ AVar.take child.started
+    runIntGate parent
+    modify_ (_ + 1)
+  ReplacementWork gate completed -> do
+    runIntGate gate
+    modify_ (_ + 10)
+    liftAff $ void $ AVar.tryPut unit completed
 
 runIntGate :: forall props action key. Gate -> HaloM props Int action key Unit
 runIntGate gate = do

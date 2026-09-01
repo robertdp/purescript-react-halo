@@ -1,18 +1,18 @@
 # Migrate from Halo v3 to v4
 
-Halo v4 is an unreleased breaking redesign. It replaces the Free/FreeAp evaluator and implicit action effects with a direct scoped runtime, named handlers, and explicit tasks. There are no compatibility aliases in v4.
+Halo v4 is an unreleased breaking redesign. It replaces the Free/FreeAp evaluator and implicit action effects with a direct scoped runtime, named handlers, and first-class tasks. There are no compatibility aliases.
 
 ## Why the model changed
 
-In v3, `eval` combined lifecycle events and actions, and action evaluation commonly became asynchronous work by convention. That made it difficult to tell whether an action was an event, a long-running task, or both. It also left concurrency policy and cancellation ownership implicit.
+In v3, `eval` combined lifecycle events and actions, and asynchronous action work was conventional rather than explicit. It was difficult to tell whether an action was an event, a long-running task, or both, and concurrency ownership was easy to obscure.
 
 In v4:
 
-- handlers respond to lifecycle and action events;
-- `startTask` explicitly marks component-scoped asynchronous work;
-- a `TaskPolicy` is chosen next to that work;
+- handlers respond to activation, prop changes, and actions;
+- reusable task definitions bind identity, scheduling strategy, and implementation;
+- `perform` explicitly starts component-scoped work;
 - `fork` is explicitly parent-scoped; and
-- activity counts explicit tasks only.
+- activity counts performed tasks only.
 
 ## Migration sequence
 
@@ -31,6 +31,8 @@ HaloM props state action key a
 ```
 
 Choose an application task-key type with an `Ord` instance. Halo now runs directly on `Aff`; remove the custom base monad parameter, `hoist`, `HaloAp`, and Free/FreeAp-specific code. Use `liftAff` for asynchronous effects.
+
+Task input does not become another `HaloM` parameter. It is generic on each `Task` value.
 
 ### 2. Replace `eval` with `handlers`
 
@@ -56,41 +58,63 @@ handlers = Halo.defaultHandlers
 
 There is no public `Lifecycle`, `EvalSpec`, `mkEval`, or `defaultEval` in v4.
 
-`onActivate` is repeatable under React StrictMode. There is no asynchronous deactivation handler: React cleanup is synchronous, and pretending otherwise would give misleading completion guarantees. Use subscription cleanup, `Aff` finalizers, or an external resource owner.
+`onActivate` is repeatable under React StrictMode. There is no asynchronous deactivation handler: React cleanup is synchronous. Use subscription cleanup, `Aff` finalizers, or an external resource owner.
 
-### 3. Make tasks explicit
+### 3. Define long-running operations as tasks
 
-In v3, an action handler might perform a request directly:
+Create a key type, then define each task once:
 
 ```purescript
-Action (SearchChanged query) -> do
+data TaskKey = SearchRequest | SaveRequest
+
+derive instance eqTaskKey :: Eq TaskKey
+derive instance ordTaskKey :: Ord TaskKey
+
+searchTask :: Halo.Task Props State Action TaskKey String
+searchTask = Halo.restartable SearchRequest \query -> do
   results <- liftAff $ search query
   modify_ _ { results = results }
+
+saveTask :: Halo.Task Props State Action TaskKey Unit
+saveTask = Halo.drop SaveRequest \_ -> saveCurrentForm
 ```
 
-In v4, submit work with its policy:
+The available constructors are `concurrent`, `restartable`, `drop`, `enqueue`, and `keepLatest`. Each takes a key and an input-driven implementation. Strategy is part of the definition and cannot vary at performance sites.
+
+A key's first performance establishes its strategy for the component runtime lifetime. Deliberate same-key, same-strategy definitions share a slot. Conflicting same-key strategies are rejected through `TaskConfigurationError key`.
+
+### 4. Perform tasks from actions
+
+Replace direct long-running action work or any action-to-policy table with:
 
 ```purescript
 onAction = case _ of
-  SearchChanged query ->
-    Halo.startTask (Halo.Restartable SearchRequest) do
-      results <- liftAff $ search query
-      modify_ _ { results = results }
+  SearchChanged query -> Halo.perform searchTask query
+  SaveClicked -> Halo.perform_ saveTask
 ```
 
-Delete any top-level `schedule :: action -> TaskPolicy key`. An action is no longer implicitly a task. Some actions may only modify state; others may submit multiple tasks or cancel a keyed task.
+An action is no longer implicitly a task. Some actions only update state; others may perform multiple tasks.
 
-### 4. Add explicit keyed cancellation where needed
+### 5. Replace keyed cancellation and activity lookup
 
-Replace stored task fibers or cancellation actions with:
+Cancellation now takes the task definition:
 
 ```purescript
-Halo.cancelTask SearchRequest
+Halo.cancel searchTask
 ```
 
-This cancels running keyed tasks and discards their queue. It does not affect `Every` tasks.
+This fences running work and discards queued work for the task's key. Same-key definitions share cancellation.
 
-### 5. Update the error handler
+Activity lookup also takes the task:
+
+```purescript
+searchCounts = Halo.activity searchTask halo.activity
+totalCounts = Halo.activityTotals halo.activity
+```
+
+Every task, including `concurrent`, is keyed. Replace direct key lookup with the task-based helper.
+
+### 6. Update the error handler
 
 Change:
 
@@ -104,17 +128,18 @@ into:
 onError :: ErrorContext props action key -> Error -> Effect Unit
 ```
 
-Handle the v4 contexts:
+Handle:
 
 - `ActivationError`;
 - `DeactivationError` for subscription cleanup;
 - `PropsChangeError previousProps`;
-- `ActionError action`; and
-- `TaskError policy`.
+- `ActionError action`;
+- `TaskError key`; and
+- `TaskConfigurationError key`.
 
 Expected request failures still belong in domain state or actions.
 
-### 6. Update hook and component specs
+### 7. Update hook and component specs
 
 Remove `eval` and `schedule`; add `handlers`:
 
@@ -127,23 +152,23 @@ halo <- Halo.useHalo
   }
 ```
 
-`useHalo` returns a record with `state`, `dispatch`, and `activity`.
+`useHalo` returns `state`, `dispatch`, and `activity`. `Halo.component` renderers receive `{ props, state, dispatch, activity }`; the old `send` field is now `dispatch`.
 
-`Halo.component` renderers receive `{ props, state, dispatch, activity }`. The old `send` field is now `dispatch`.
+### 8. Revisit every `fork`
 
-### 7. Revisit every `fork`
-
-A v4 `fork` is a structured child. It is cancelled when its creating handler or task finishes. If the old code expected a fork to survive handler completion until component unmount, convert it to an explicit task:
+A v4 `fork` is a structured child. It is cancelled when its creating handler or task finishes. If old code expected a fork to survive handler completion, make it a task and call `perform`:
 
 ```purescript
-Halo.startTask (Halo.Restartable BackgroundSync) backgroundSync
+backgroundSync = Halo.restartable BackgroundSync \_ -> synchronize
+
+onAction StartSync = Halo.perform_ backgroundSync
 ```
 
 Use `fork` only for concurrency owned by a parent that remains alive.
 
-### 8. Replace Halogen emitters
+### 9. Replace Halogen emitters
 
-Halo v4 has its own small emitter type:
+Halo v4 has its own emitter type:
 
 ```purescript
 events = Halo.makeEmitter \emit -> do
@@ -158,11 +183,12 @@ events = Halo.makeEmitter \emit -> do
 Before completing a migration, verify:
 
 - `onActivate` is safe to replay;
-- each long-running operation uses an intentional policy;
-- `Drop` submissions are genuinely optional;
-- `Enqueue` producers cannot grow an unbounded queue unexpectedly;
-- `cancelTask` is used when UI state must clear keyed work without replacement;
-- activity-dependent UI expects explicit tasks only;
-- structured children do not need to outlive their parents;
+- task keys are stable and distinct where work is independent;
+- definitions sharing a key use one intentional strategy;
+- `drop` inputs are genuinely optional;
+- `enqueue` producers cannot grow an unbounded queue unexpectedly;
+- `cancel task` is used when UI state must clear work without replacement;
+- activity-dependent UI expects performed tasks only;
+- structured children do not need to outlive parents;
 - expected failures are modeled in state rather than logged as unexpected errors; and
 - external writes remain correct even when local cancellation cannot undo them.

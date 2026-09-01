@@ -13,9 +13,10 @@ import Effect.AVar as EffectAVar
 import Effect.Class (liftEffect)
 import Effect.Exception as Exception
 import Effect.Ref as Ref
+import React.Halo as Halo
 import React.Halo.Handlers (Handlers, defaultHandlers)
 import React.Halo.Internal.Runtime (activate, createRuntime, deactivate, dispatch, subscribe, syncSpec, unsubscribe)
-import React.Halo.Internal.Types (ErrorContext(..), SubscriptionId, TaskPolicy(..))
+import React.Halo.Internal.Types (ErrorContext(..), SubscriptionId)
 import React.Halo.Subscription (Emitter, makeEmitter)
 import Test.Halo.Helpers (Action(..), Gate, Key(..), await, awaitCounts, handlers, makeGate, withHarness)
 import Test.Spec (Spec, describe, it)
@@ -153,15 +154,22 @@ spec = describe "subscriptions and errors" do
     newErrors <- liftEffect $ Ref.read replacementErrors
     newErrors `shouldEqual` [ "replacement action: boom" ]
 
-  it "routes an explicit task failure with TaskError" $ withHarness \harness -> do
+  it "routes an explicit task failure with its task key" $ withHarness \harness -> do
     gate <- liftEffect makeGate
-    liftEffect $ dispatch harness.runtime (TaskBoom (Restartable Save) gate)
+    let
+      failingTask = Halo.restartable Save \_ ->
+        liftAff $ Aff.finally
+          (void $ AVar.tryPut unit gate.settled)
+          do
+            AVar.put unit gate.started
+            Aff.throwError (Aff.error "task boom")
+    liftEffect $ dispatch harness.runtime (PerformUnit failingTask gate)
     void $ await "failing task start" gate.started
     void $ await "task error handler" harness.errorRaised
     awaitCounts harness { running: 0, queued: 0 }
 
     errors <- liftEffect $ Ref.read harness.errors
-    errors `shouldEqual` [ "task: task boom" ]
+    errors `shouldEqual` [ "task Save: task boom" ]
 
 data SubscriptionAction
   = Start (Emitter SubscriptionAction) (AVar Unit)

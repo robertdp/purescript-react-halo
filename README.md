@@ -1,6 +1,6 @@
 # React Halo
 
-Halo gives a PureScript React component one typed action handler plus explicit, component-scoped asynchronous tasks. It is for event-driven UI workflows where plain hooks become hard to coordinate: replace stale searches, prevent overlapping saves, preserve upload order, or retain only the newest pending refresh.
+Halo gives a PureScript React component one typed action handler plus reusable, component-scoped tasks. It is for UI workflows where plain hooks become hard to coordinate: replace stale searches, prevent overlapping saves, preserve upload order, or retain only the newest pending refresh.
 
 For one request derived directly from render dependencies, `React.Basic.Hooks.Aff.useAff` is usually simpler. Halo earns its place when actions, state transitions, cancellation, and task concurrency need one coherent owner.
 
@@ -8,11 +8,11 @@ For one request derived directly from render dependencies, `React.Basic.Hooks.Af
 
 Halo separates three kinds of work:
 
-1. **Handlers** react to activation, prop changes, and dispatched actions. They start immediately, are owned by the active React scope, and do not count as task activity.
-2. **Tasks** are submitted explicitly with `startTask`. They can outlive the handler that submitted them, use a named concurrency policy, drive `Activity`, and are cancelled on deactivation.
+1. **Handlers** react to activation, prop changes, and dispatched actions. They start immediately, belong to the active React scope, and do not count as task activity.
+2. **Tasks** are first-class definitions created with `concurrent`, `restartable`, `drop`, `enqueue`, or `keepLatest`. A definition binds its identity, scheduling strategy, and input-driven implementation. `perform` submits work that can outlive its caller and drives `Activity`.
 3. **Structured children** are created with `fork`. A child belongs to its current handler or task and is cancelled when that parent finishes.
 
-An action is an event, not an implicit task. The action handler decides whether to update state immediately, start a task, cancel keyed tasks, subscribe to events, or combine those operations.
+An action is an event, not an implicit task. The action handler decides whether to update state, perform or cancel a task, subscribe to events, or combine those operations.
 
 ## Try the unreleased v4
 
@@ -40,7 +40,7 @@ Your application also needs the JavaScript packages required by `react-basic-hoo
 
 ## Quick start: replace a stale request
 
-This component handles every click immediately, then explicitly submits a restartable request. A second click fences and cancels the prior `GreetingRequest` task before starting another.
+Define the request once as a restartable task. Each click dispatches an action immediately; `perform_` then fences and cancels prior work for `GreetingRequest` before starting the new request.
 
 ```purescript
 module Example.LoadButton where
@@ -68,31 +68,32 @@ type State =
 
 data Action = Load
 
-data Task = GreetingRequest
+data TaskKey = GreetingRequest
 
-derive instance eqTask :: Eq Task
-derive instance ordTask :: Ord Task
+derive instance eqTaskKey :: Eq TaskKey
+derive instance ordTaskKey :: Ord TaskKey
+
+loadGreetingTask :: Halo.Task Props State Action TaskKey Unit
+loadGreetingTask = Halo.restartable GreetingRequest \_ -> do
+  modify_ _ { loading = true, result = Nothing }
+  Props { loadGreeting } <- Halo.props
+  outcome <- liftAff $ attempt loadGreeting
+  modify_ _
+    { loading = false
+    , result = Just $ case outcome of
+        Left error -> Left (message error)
+        Right greeting -> Right greeting
+    }
 
 loadButton :: Component Props
 loadButton = Halo.component "LoadButton"
   { initialState: \_ -> { loading: false, result: Nothing }
   , handlers: Halo.defaultHandlers
-      { onAction = \Load ->
-          Halo.startTask (Halo.Restartable GreetingRequest) do
-            modify_ _ { loading = true, result = Nothing }
-            Props { loadGreeting } <- Halo.props
-            outcome <- liftAff $ attempt loadGreeting
-            modify_ _
-              { loading = false
-              , result = Just $ case outcome of
-                  Left error -> Left (message error)
-                  Right greeting -> Right greeting
-              }
-      }
+      { onAction = \Load -> Halo.perform_ loadGreetingTask }
   , onError: \_ error ->
       Console.error $ "Unexpected Halo failure: " <> message error
   , render: \{ state, dispatch, activity } ->
-      let counts = Halo.activityFor GreetingRequest activity
+      let counts = Halo.activity loadGreetingTask activity
       in R.div_
         [ R.button
             { onClick: capture_ (dispatch Load)
@@ -107,11 +108,11 @@ loadButton = Halo.component "LoadButton"
   }
 ```
 
-The request catches an expected domain failure and stores it in state. Unexpected failures that escape a handler or task go to `onError` with an `ErrorContext`.
+The task catches an expected domain failure and stores it in state. Unexpected failures that escape a handler or task go to `onError` with an `ErrorContext`.
 
 ## Learn and reference
 
-- [Guide](docs/guide.md): handlers, explicit tasks, policies, cancellation, activity, subscriptions, lifecycle, patterns, and troubleshooting.
+- [Guide](docs/guide.md): handlers, task definitions, scheduling, cancellation, activity, subscriptions, activation, patterns, and troubleshooting.
 - [API reference](docs/reference.md): public types and operations with exact semantics.
 - [v3 to v4 migration](docs/migration-v4.md): breaking changes and a practical conversion sequence.
 
