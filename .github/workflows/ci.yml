@@ -1,26 +1,35 @@
 name: CI
 
-on: push
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
 
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-node@v3
-
-      - uses: thomashoneyman/setup-purescript@main
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          purescript: "0.15.4"
-          spago: "0.20.9"
+          node-version: 22
+          cache: npm
 
-      - name: Cache PureScript dependencies
-        uses: actions/cache@v2
-        with:
-          key: ${{ runner.os }}-spago-${{ hashFiles('**/*.dhall') }}
-          path: |
-            .spago
-            output
+      - name: Install pinned tools
+        run: npm ci
 
-      - run: npm test
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Build
+        run: npm run build -- --strict
+
+      - name: Test
+        run: npm test

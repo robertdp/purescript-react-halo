@@ -1,26 +1,52 @@
-module React.Halo.Component where
+module React.Halo.Component
+  ( ComponentSpec
+  , component
+  ) where
 
 import Prelude
 
-import Data.Tuple.Nested ((/\))
 import Effect (Effect)
-import Effect.Aff (Aff)
+import Effect.Aff (Error)
 import React.Basic.Hooks (Component, JSX)
 import React.Basic.Hooks as React
 import React.Halo.Hook (useHalo)
-import React.Halo.Internal.Control (HaloM)
-import React.Halo.Internal.Types (Lifecycle)
+import React.Halo.Internal.Runtime (HaloM)
+import React.Halo.Internal.Types (Activity, ErrorContext, Lifecycle, TaskPolicy)
 
-type ComponentSpec props state action m =
-  { initialState :: props -> state
-  , eval :: Lifecycle props action -> HaloM props state action m Unit
-  , render :: { props :: props, state :: state, send :: action -> Effect Unit } -> JSX
+type ComponentSpec props state action key =
+  { eval :: Lifecycle props action -> HaloM props state action key Unit
+  , initialState :: props -> state
+  , onError :: ErrorContext props action -> Error -> Effect Unit
+  , render ::
+      { activity :: Activity key
+      , dispatch :: action -> Effect Unit
+      , props :: props
+      , state :: state
+      }
+      -> JSX
+  , schedule :: action -> TaskPolicy key
   }
 
--- | Build a component by providing a name and a Halo component spec.
-component :: forall props state action. String -> ComponentSpec props state action Aff -> Component props
-component name spec@{ eval, render } =
+-- | Build a complete React component around a Halo action runtime.
+component
+  :: forall props state action key
+   . Ord key
+  => String
+  -> ComponentSpec props state action key
+  -> Component props
+component name spec =
   React.component name \props -> React.do
     initialState <- React.useMemo unit \_ -> spec.initialState props
-    state /\ send <- useHalo { props, initialState, eval }
-    pure (render { props, state, send })
+    halo <- useHalo
+      { eval: spec.eval
+      , initialState
+      , onError: spec.onError
+      , props
+      , schedule: spec.schedule
+      }
+    pure $ spec.render
+      { activity: halo.activity
+      , dispatch: halo.dispatch
+      , props
+      , state: halo.state
+      }
