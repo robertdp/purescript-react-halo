@@ -1,22 +1,24 @@
 # React Halo
 
-Halo gives a PureScript React component one typed action handler, component state, and a safe boundary for application effects. Define UI interactions with an action ADT, lift your application monad into `HaloM`, and supply an interpreter from that monad to `Aff` when the component or hook is created.
+Halo gives a PureScript React component a typed action handler, local state, and a safe boundary for application effects. Your application logic remains in its own monad; Halo adds access to props and state, action dispatch, component-owned processes, subscriptions, and cleanup.
 
-Each active React effect owns its handlers, component forks, and subscriptions. Deactivation cancels that work, and work that has been killed or deactivated cannot commit Halo state.
+Use Halo when several UI interactions share state and asynchronous work must remain owned by the component. For a single request derived directly from render dependencies, `React.Basic.Hooks.Aff.useAff` is usually simpler.
 
-For one request derived directly from render dependencies, `React.Basic.Hooks.Aff.useAff` is usually simpler. Halo is useful when actions, shared state transitions, application logic, and cancellable component processes need one coherent owner.
+## How Halo fits
 
-## Mental model
+A Halo component has three main parts:
 
-1. **Actions** are values in your UI action ADT. Rendering code calls `dispatch :: action -> Effect Unit`; Halo starts the action handler in the active component scope.
-2. **Application effects** remain in your application monad, commonly `ReaderT AppEnv Aff`. Use the standard transformer `lift` inside `HaloM`. The interpreter supplied to `component` or `useHalo` runs those effects in Halo-owned `Aff` fibers.
-3. **Forks** are component-owned processes. A fork may outlive the handler that started it, can be killed by its `ForkId`, and is cancelled when the React scope deactivates.
+1. **Actions** describe UI interactions. Rendering code calls `dispatch :: action -> Effect Unit`, and Halo starts the corresponding action handler in the active component scope.
+2. **Application effects** remain in an application monad such as `ReaderT Env Aff`. Standard `lift` embeds those effects in `HaloM`, and an interpreter supplied at the React boundary translates them to `Aff`.
+3. **Forks** are cancellable processes owned by the active component. A fork may outlive the handler that started it, but it cannot outlive the React activation that owns it.
 
 Halo does not provide global state, server caching, or a separate process runtime.
 
-## Try the unreleased v4
+## Install this unreleased version
 
-Halo v4 targets PureScript 0.15.16 and Spago 1.0.4. It is not published yet; the Registry still resolves `react-halo` to v3. Add a sibling checkout as a local package:
+The API documented on this branch is not published yet; the PureScript Registry currently resolves `react-halo` to v3. This branch uses the PureScript and Spago versions pinned in [`package.json`](package.json).
+
+Add a checkout as a local Spago package and declare the dependencies imported by the example below:
 
 ```yaml
 package:
@@ -24,7 +26,6 @@ package:
     - aff
     - console
     - effect
-    - either
     - exceptions
     - foldable-traversable
     - maybe
@@ -40,19 +41,21 @@ workspace:
       path: ../purescript-react-halo
 ```
 
-After v4 is published:
+After v4 is published, the local override can be replaced with:
 
 ```console
-spago install aff console effect either exceptions foldable-traversable maybe prelude react-basic-dom react-basic-hooks react-halo transformers
+spago install aff console effect exceptions foldable-traversable maybe prelude react-basic-dom react-basic-hooks react-halo transformers
 ```
 
-This list is complete for the quick-start shape under Spago's pedantic dependency check; an existing React application will already declare several packages. `react-basic-dom` is required by the renderer, not by Halo. Your application also needs the JavaScript packages required by `react-basic-hooks`, including React. Halo has no npm runtime entry point or npm runtime dependencies.
+`react-basic-dom` is used by this example, not required by Halo itself. Your application also needs the JavaScript packages required by `react-basic-hooks`, including React. Halo has no npm runtime entry point or npm runtime dependencies.
 
 ## Quick start
 
-Define the application monad and its runtime interpreter:
+Define an application monad and the interpreter that runs it:
 
 ```purescript
+type Env = { loadGreeting :: Aff String }
+
 newtype AppM a = AppM (ReaderT Env Aff a)
 
 derive newtype instance functorAppM :: Functor AppM
@@ -65,11 +68,18 @@ derive newtype instance monadAffAppM :: MonadAff AppM
 
 runAppM :: Env -> AppM ~> Aff
 runAppM env (AppM program) = runReaderT program env
+
+loadGreeting :: AppM String
+loadGreeting = AppM do
+  env <- ask
+  liftAff env.loadGreeting
 ```
 
-Use an action ADT for interactions and keep cancellation identity in component state:
+Define component state and an action ADT. Store a `ForkId` when another action must be able to cancel the process:
 
 ```purescript
+type Props = { title :: String }
+
 type State =
   { fiber :: Maybe Halo.ForkId
   , loading :: Boolean
@@ -99,9 +109,9 @@ handlers = Halo.defaultHandlers
   }
 ```
 
-`lift` is `Control.Monad.Trans.Class.lift`. A root captures its interpreter when it starts. A fork launched later by that root inherits the same snapshot, even if a newer render has supplied another interpreter; unrelated new handlers use the latest interpreter.
+`lift` is `Control.Monad.Trans.Class.lift`. Each handler captures the interpreter current when it starts. A fork inherits its launching handler's interpreter, even if React renders with a newer interpreter before the fork begins.
 
-Create the component at the application boundary:
+Supply the interpreter when creating the component:
 
 ```purescript
 loadButton :: Env -> Component Props
@@ -109,8 +119,8 @@ loadButton env = Halo.component "LoadButton" (runAppM env)
   { initialState: \_ ->
       { fiber: Nothing, loading: false, result: Nothing }
   , handlers
-  , onError: \context error ->
-      Console.error $ showContext context <> ": " <> message error
+  , onError: \_ error ->
+      Console.error $ "Unexpected Halo error: " <> message error
   , render: \{ props, state, dispatch } ->
       R.div_
         [ R.text props.title
@@ -122,6 +132,9 @@ loadButton env = Halo.component "LoadButton" (runAppM env)
             { onClick: capture_ (dispatch Cancel)
             , children: [ R.text "Cancel" ]
             }
+        , R.text $ case state.result of
+            Nothing -> if state.loading then "Loading…" else "Not loaded"
+            Just greeting -> greeting
         ]
   }
 ```
@@ -142,21 +155,13 @@ halo <- Halo.useHalo (runAppM env)
 -- halo.dispatch
 ```
 
-## Learn and reference
+A complete version of this example is compiled as [`test/Test/Halo/DocExamples.purs`](test/Test/Halo/DocExamples.purs).
 
-- [Guide](docs/guide.md): application monads, handlers, component ownership, cancellation, parallelism, subscriptions, and errors.
-- [API reference](docs/reference.md): public types and exact runtime semantics.
+## Learn more
 
-The documentation examples are compile-checked in `test/Test/Halo/DocExamples.purs`.
+- The [Halo guide](docs/guide.md) explains actions, state, component processes, cancellation, parallelism, subscriptions, and errors.
+- Generate the exact API reference from public source comments with `npx spago docs --offline`.
+- The [runtime architecture](docs/architecture.md) describes ownership and cancellation invariants for maintainers.
+- See [Contributing](CONTRIBUTING.md) before changing the library.
 
-## Development
-
-```console
-npm ci
-npm run format:check
-npm run build -- --strict --pedantic-packages
-npm test
-npx spago docs
-```
-
-The deterministic runtime tests model React's setup-cleanup-setup sequence directly. A DOM mounting test is intentionally omitted because the package manifest contains only the pinned PureScript compiler and Spago; the hook uses the tested runtime boundary, and component examples are compile-checked.
+The deterministic tests model React's setup-cleanup-setup sequence directly. The repository does not yet include a real DOM/StrictMode mounting fixture.

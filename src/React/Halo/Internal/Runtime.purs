@@ -47,16 +47,23 @@ import React.Halo.Subscription (Emitter)
 import React.Halo.Subscription as Subscription
 import Unsafe.Reference (unsafeRefEq)
 
--- | The Halo component computation. Application effects in `m` are translated
--- | into the current root's `Aff` fiber by the interpreter supplied to
--- | `component` or `useHalo`.
+-- | A sequential component computation over an application monad `m`.
+-- |
+-- | Standard `lift` runs an `m` value through the interpreter supplied to
+-- | `component` or `useHalo`. Every lift checks the current ownership fence, so
+-- | killed or deactivated work cannot begin another application effect. HaloM
+-- | also provides component `MonadState`; its other lifted capabilities, such
+-- | as `MonadEffect`, `MonadAff`, `MonadAsk`, `MonadTell`, and `MonadThrow`, pass
+-- | through `m`.
 newtype HaloM props state action (m :: Type -> Type) a = HaloM
   (ReaderT (Execution props state action m) Aff a)
 
--- | The parallel applicative counterpart of `HaloM`.
+-- | The abstract parallel applicative counterpart of `HaloM`.
 -- |
--- | Parallel branches share the current root, component scope, and application
--- | interpreter snapshot.
+-- | Parallel branches share one root, component scope, and application
+-- | interpreter snapshot. Concurrent component-state writes have
+-- | nondeterministic ordering; prefer combining independent application results
+-- | before one state update.
 newtype HaloAp props state action (m :: Type -> Type) a = HaloAp
   (ReaderT (Execution props state action m) ParAff a)
 
@@ -113,8 +120,12 @@ instance monadStateHaloM :: MonadState state (HaloM props state action m) where
         pure result
       else pure result
 
--- | Activation, prop-change, and action callbacks. Each callback is a
--- | component-scope root and may perform application effects directly.
+-- | Activation, prop-change, and action callbacks.
+-- |
+-- | Every invocation starts an independent root in the current React
+-- | activation. Handlers can overlap and are cancelled when that activation
+-- | deactivates. `onPropsChange` receives the previous props; `getProps` reads
+-- | the current props.
 type Handlers props state action m =
   { onActivate :: HaloM props state action m Unit
   , onPropsChange :: props -> HaloM props state action m Unit
@@ -292,15 +303,19 @@ dispatchToScope runtime@(Runtime state) scope action = do
     spec <- Ref.read state.spec
     startHandler runtime scope (ActionError action) (spec.handlers.onAction action)
 
--- | Read the latest component props.
+-- | Read the latest component props, rather than the props captured when the
+-- | current root started.
 getProps :: forall props state action m. HaloM props state action m props
 getProps = HaloM $ ReaderT \execution -> do
   let Runtime runtime = execution.runtime
   liftEffect $ Ref.read runtime.props
 
--- | Start work owned by the current React activation. The fork may outlive its
--- | launching handler, inherits that root's interpreter snapshot, and is
--- | cancelled on explicit `kill` or deactivation.
+-- | Start a process owned by the current React activation.
+-- |
+-- | The fork may outlive its launching handler and has an independent
+-- | cancellation fence, but it inherits that root's application-interpreter
+-- | snapshot. It is cancelled by `kill` or activation deactivation. Unexpected
+-- | failure is reported as `ForkError`.
 fork
   :: forall props state action m
    . HaloM props state action m Unit
@@ -318,8 +333,12 @@ fork child = HaloM $ ReaderT \execution -> do
       prepared.start
   pure fid
 
--- | Cancel a component-owned fork. Halo fences the fork synchronously, then
--- | waits for its Aff cancellation and finalizers before returning.
+-- | Cancel a component-owned fork.
+-- |
+-- | Halo removes and fences the fork synchronously, then waits for Aff
+-- | cancellation and finalizers. The fence blocks later state commits, Halo
+-- | capabilities, and lifted application effects. An unknown or completed ID
+-- | is ignored.
 kill
   :: forall props state action m
    . ForkId
@@ -342,15 +361,19 @@ kill fid = HaloM $ ReaderT \execution -> do
       )
       root
 
--- | Register an emitter in the current activation scope. Its cleanup runs on
--- | manual unsubscription or deactivation.
+-- | Register an action emitter in the current activation scope.
+-- |
+-- | Its synchronous cleanup runs on manual unsubscription or deactivation.
+-- | Emissions stay bound to the activation that registered them, so a retained
+-- | stale callback cannot dispatch into a later activation.
 subscribe
   :: forall props state action m
    . Emitter action
   -> HaloM props state action m SubscriptionId
 subscribe = subscribeWithId <<< const
 
--- | Subscribe while providing the allocated identifier to the emitter.
+-- | Subscribe while providing the allocated identifier to the emitter's
+-- | registration logic.
 subscribeWithId
   :: forall props state action m
    . (SubscriptionId -> Emitter action)
@@ -366,8 +389,10 @@ subscribeWithId makeEmitter = HaloM $ ReaderT \execution -> do
       Ref.modify_ (Map.insert sid cleanup) scope.subscriptions
   pure sid
 
--- | Remove a tracked subscription before running its cleanup. A throwing
--- | cleanup therefore cannot be retried during deactivation.
+-- | Remove a tracked subscription before running its cleanup.
+-- |
+-- | A throwing cleanup therefore cannot be retried during deactivation; when
+-- | called from a root, the failure is routed through that root's error context.
 unsubscribe
   :: forall props state action m
    . SubscriptionId

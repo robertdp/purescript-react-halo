@@ -1,3 +1,12 @@
+-- | Component-scoped action handling for PureScript React.
+-- |
+-- | A Halo component keeps application effects in a caller-defined monad `m`.
+-- | `component` or `useHalo` receives a natural transformation from `m` to
+-- | `Aff`, while `HaloM` adds component props, state, actions, cancellable
+-- | forks, subscriptions, and lifecycle ownership.
+-- |
+-- | Import this module for the intentional public API. Runtime constructors and
+-- | ownership records remain internal.
 module React.Halo
   ( module Exports
   ) where

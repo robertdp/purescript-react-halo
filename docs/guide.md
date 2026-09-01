@@ -1,10 +1,10 @@
-# Halo v4 guide
+# Halo guide
 
-Halo combines a typed UI action handler with component state and a runtime boundary for your application monad. This guide starts from the [README quick start](../README.md); use the [API reference](reference.md) for exact signatures.
+Halo combines a typed UI action handler with component state and a runtime boundary for your application monad. Start with the [README quick start](../README.md), then use this guide when choosing lifetimes, cancellation, or cleanup behavior.
 
-## Keep application logic in `AppM`
+## Run application logic through `AppM`
 
-Most applications already have a monad that carries services or configuration over `Aff`:
+An application monad commonly carries services or configuration over `Aff`:
 
 ```purescript
 newtype AppM a = AppM (ReaderT AppEnv Aff a)
@@ -13,13 +13,13 @@ runAppM :: AppEnv -> AppM ~> Aff
 runAppM env (AppM program) = runReaderT program env
 ```
 
-Halo restores that monad as the fourth `HaloM` parameter:
+Use it as the fourth `HaloM` parameter:
 
 ```purescript
-HaloM props state action AppM result
+type UI a = HaloM Props State Action AppM a
 ```
 
-Use the standard transformer operation to run application logic:
+Standard transformer `lift` runs application logic inside a Halo computation:
 
 ```purescript
 import Control.Monad.Trans.Class (lift)
@@ -30,16 +30,18 @@ loadAccount = do
   modify_ _ { account = Just account }
 ```
 
-The interpreter is explicit at the React boundary:
+Supply the interpreter at the React boundary:
 
 ```purescript
 Halo.component "Account" (runAppM env) spec
 Halo.useHalo (runAppM env) hookSpec
 ```
 
-A handler or fork keeps the interpreter with which it started. If a later render supplies another interpreter, only new roots use it. Do not implement an interpreter by detaching work with `launchAff_`: Halo can only own and cancel the `Aff` returned by the interpreter.
+Each new handler captures the latest interpreter supplied to the hook. A fork inherits the interpreter captured by the root that launches it. This keeps one running action on one application environment even when a later render supplies another interpreter.
 
-## Handle an action ADT
+The interpreter must return the `Aff` that performs the work. Do not detach it with `launchAff_`; Halo can own and cancel only the returned computation.
+
+## Handle a UI action ADT
 
 Rendering code receives `dispatch :: action -> Effect Unit`. Each dispatch starts `handlers.onAction action` in the current component scope:
 
@@ -57,11 +59,30 @@ handlers = Halo.defaultHandlers
   }
 ```
 
-Actions are concurrent by default, matching the event-driven model: one long-running action does not block later dispatches. Work is still cancelled when the React scope deactivates. Use a component-owned fork when another action needs an ID with which to cancel a process.
+Action handlers overlap. A long-running action does not block a later dispatch, and React deactivation cancels every handler still running in that activation.
 
-## Work with state and props
+When a process must outlive its handler or another action must cancel it, start a component-owned fork instead of leaving the work in the handler.
+
+## Update state without stale snapshots
 
 `HaloM` has `MonadState state`. Use normal `get`, `put`, `gets`, `modify`, and `modify_` operations.
+
+State operations run against the state current at that operation. Avoid reading a whole state value, waiting for an application effect, and then writing a modified copy of the old value:
+
+```purescript
+-- Avoid: another action can update state while save runs.
+old <- get
+result <- lift (save old.form)
+put (old { result = Just result })
+```
+
+Capture only the input needed by the effect, then update the current state after it completes:
+
+```purescript
+form <- gets _.form
+result <- lift (save form)
+modify_ _ { result = Just result }
+```
 
 `Halo.getProps` reads the latest props. `onPropsChange` receives the previous props, so both sides of a synchronization are available:
 
@@ -71,9 +92,7 @@ onPropsChange = \previous -> do
   synchronize previous current
 ```
 
-State commits are fenced. After a handler or fork is killed, or after its activation deactivates, later Halo state operations can still compute their return value but cannot commit a new state or call React's state setter.
-
-Capture values associated with an action before starting work when they must not change during that work. `getProps` intentionally reads current props rather than a render snapshot.
+Capture props before asynchronous work when that work must use one render's value. Otherwise, a later `getProps` intentionally returns newer props.
 
 ## Start and kill component processes
 
@@ -92,15 +111,26 @@ startSearch query = do
   modify_ _ { searchFiber = Just fiber }
 ```
 
-`Halo.kill id` removes the fork from component tracking, fences its state and capabilities synchronously, requests Aff cancellation, and waits for cancellation and Aff finalizers before returning. Killing an unknown or completed ID does nothing. A fork inherits its launching root's application interpreter snapshot, even when a render supplies a newer interpreter before the fork starts.
+`Halo.kill id` removes a tracked fork, fences it synchronously, requests Aff cancellation, and waits for cancellation and Aff finalizers before returning. Killing an unknown or completed ID does nothing.
 
-Deactivation cannot wait asynchronously because React cleanup is synchronous. It fences the whole activation first, attempts every subscription cleanup, and requests cancellation of all remaining handlers and forks. Aff finalizers continue in their cancellation fibers, but they cannot commit Halo state or start a newly lifted application effect after the fence.
+A killed or deactivated root cannot commit Halo state, register another Halo-owned capability, or start a newly lifted application effect—even if it catches the initial Aff cancellation. Cancellation cannot retract an HTTP request, storage write, callback, or log that already happened. Design external writes for retry and idempotency where needed.
 
-Cancellation is cooperative. It cannot retract an HTTP request, storage write, callback, or log that already happened. Design external writes for retry and idempotency where needed.
+## Clean up at the correct boundary
+
+Halo intentionally has no asynchronous `onDeactivate` handler. React effect cleanup is synchronous, so React cannot wait for a `HaloM`, `AppM`, or `Aff` callback. Starting detached work during cleanup would also escape component ownership.
+
+Choose cleanup according to the resource:
+
+- **Component process:** acquire and use the resource inside `fork` with an Aff finalizer. Deactivation requests cancellation of the fork.
+- **Event source:** return synchronous cleanup from `makeEmitter`; Halo runs it while deactivating the subscription scope.
+- **User cancellation:** retain the `ForkId` and call `kill`, which waits for finalizers.
+- **Persistence:** save during normal application flow. Do not rely on unmount completing asynchronous persistence.
+
+Deactivation first fences the activation, then runs subscription cleanup and requests cancellation of handlers and forks. React cannot wait for those Aff cancellations, but their finalizers cannot commit Halo state or begin new lifted effects after the fence.
 
 ## Run independent work in parallel
 
-`HaloM` has a direct `Parallel` instance with abstract counterpart `HaloAp`. Branches share the same root, scope, and interpreter snapshot:
+`HaloM` has a direct `Parallel` instance with abstract counterpart `HaloAp`. Parallel branches share one root, component scope, and interpreter snapshot:
 
 ```purescript
 loadDashboard = do
@@ -112,9 +142,9 @@ loadDashboard = do
   modify_ _ { profile = profile, feed = feed }
 ```
 
-Prefer parallel application reads followed by one Halo state commit. Concurrent Halo state writes have nondeterministic ordering; a later commit can overwrite an earlier one.
+Prefer independent application reads followed by one Halo state update. Concurrent state writes have nondeterministic ordering and can overwrite one another.
 
-Parallel work is lexical: the combined computation waits for its branches. Use `fork` only when work must continue independently of the launching handler or needs explicit cancellation by ID.
+Parallel work is lexical: the combined computation waits for every branch. Use `fork` when work must continue independently of the launching handler or needs explicit cancellation by ID.
 
 ## Configure lifecycle handlers
 
@@ -126,25 +156,23 @@ type Handlers props state action m =
   }
 ```
 
-Start with `defaultHandlers` and replace only what the component needs.
+Start with `defaultHandlers` and replace only the callbacks the component needs.
 
 ### `onActivate`
 
-Halo calls this for every React effect activation. Development StrictMode can run setup, cleanup, then setup again for one hook instance. Treat activation as repeatable. Work from a prior activation is fenced and cancelled before a new activation becomes current.
+Halo calls this for every React effect activation. Development StrictMode can run setup, cleanup, then setup again for one hook instance. Treat activation as repeatable, not as an exactly-once mount event.
 
 ### `onPropsChange previousProps`
 
-Halo starts this when the props reference changes. Read current props with `getProps`. New prop-change roots use the latest handlers and interpreter supplied by the hook.
+Halo starts this when the props reference changes. Read current props with `getProps`. The root uses the latest handlers and interpreter supplied to the hook.
 
 ### `onAction action`
 
-Halo starts one root for every action dispatched while active, including actions emitted by subscriptions. Dispatch while inactive is ignored.
+Halo starts one root for each action dispatched while active, including actions emitted by subscriptions. Dispatch while inactive is ignored.
 
-There is no asynchronous deactivation callback. Use subscriptions, Aff finalizers, or an external resource owner with explicit cleanup semantics.
+## Subscribe to event sources
 
-## Subscribe to custom emitters
-
-Halo's emitter avoids a Halogen dependency:
+Halo's emitter API avoids a Halogen dependency:
 
 ```purescript
 events = Halo.makeEmitter \emit -> do
@@ -152,21 +180,21 @@ events = Halo.makeEmitter \emit -> do
   pure (source.remove listener)
 ```
 
-`subscribe events` registers an action source in the current activation. `subscribeWithId (\id -> emitterFor id)` exposes the allocated `SubscriptionId` during registration. `unsubscribe id` removes tracking before running cleanup.
+`subscribe events` registers an action source in the current activation. `subscribeWithId (\id -> emitterFor id)` also exposes the allocated `SubscriptionId`. `unsubscribe id` removes tracking before running cleanup.
 
-Deactivation attempts every tracked cleanup even when one throws. Cleanup failures are reported as `DeactivationError` only after Halo has requested cleanup for the rest of the scope. A callback retained by a faulty source remains bound to its original activation and cannot dispatch into a later StrictMode reactivation.
+Deactivation attempts every tracked cleanup even when one throws. Cleanup failures are reported as `DeactivationError` without preventing the remaining cleanup and cancellation requests. A callback retained by a faulty source stays bound to its original activation and cannot dispatch into a later StrictMode activation.
 
 Emitters broadcast actions. They do not provide backpressure, consuming queues, or scheduling policies.
 
 ## Handle unexpected errors
 
-Every spec supplies:
+Every component or hook spec supplies:
 
 ```purescript
 onError :: ErrorContext props action -> Error -> Effect Unit
 ```
 
-Contexts are:
+Contexts identify the failed root or cleanup:
 
 - `ActivationError` for `onActivate`;
 - `PropsChangeError previousProps` for `onPropsChange`;
@@ -174,10 +202,18 @@ Contexts are:
 - `ForkError id` for a component-owned fork; and
 - `DeactivationError` for throwing subscription cleanup.
 
-Halo selects the latest `onError` callback when an unexpected failure is reported. Expected domain failures belong in application values or Halo state. Cancellation initiated by Halo is suppressed because the root has already been fenced.
+Halo selects the latest `onError` callback when reporting a failure. Expected domain failures belong in application values, actions, or state. Halo-initiated cancellation is suppressed after its root is fenced.
 
 ## Choose `component` or `useHalo`
 
-Use `Halo.component` when Halo owns the whole component. The renderer receives `{ props, state, dispatch }`. `initialState` receives initial props once per mount; synchronize later changes in `onPropsChange`.
+Use `Halo.component` when Halo owns the complete component. Its renderer receives `{ props, state, dispatch }`. `initialState` receives initial props once per mount; synchronize later prop changes in `onPropsChange`.
 
-Use `Halo.useHalo` when other React hooks share the render function. It accepts the same interpreter and returns `{ state, dispatch }`.
+Use `Halo.useHalo` when other React hooks share the render function. It accepts the same application interpreter and returns `{ state, dispatch }`.
+
+## Common mistakes
+
+- **An activation runs twice in development:** React StrictMode replayed setup. Make `onActivate` repeatable.
+- **A long-running action cannot be cancelled by another action:** move that work into `fork` and retain its `ForkId`.
+- **A state update overwrites newer input:** capture only effect inputs before waiting, then update current state with `modify_`.
+- **Cleanup needs asynchronous work:** use an Aff finalizer in a component-owned fork; React cannot await an asynchronous deactivation callback.
+- **An old event callback still fires:** Halo rejects its dispatch if the activation is stale, but the external source must still implement cleanup correctly.

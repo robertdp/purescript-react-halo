@@ -13,10 +13,11 @@ import React.Halo.Handlers (Handlers)
 import React.Halo.Hook (useHalo)
 import React.Halo.Internal.Types (ErrorContext)
 
--- | Complete configuration for a Halo-owned React component.
+-- | Configuration for a complete Halo-owned React component.
 -- |
 -- | `initialState` receives the initial props once per mount. Later prop changes
--- | run `handlers.onPropsChange` and do not recreate state.
+-- | start `handlers.onPropsChange` and do not recreate state. The renderer
+-- | receives current props and state plus synchronous action dispatch.
 type ComponentSpec props state action m =
   { handlers :: Handlers props state action m
   , initialState :: props -> state
@@ -31,8 +32,9 @@ type ComponentSpec props state action m =
 
 -- | Build a complete React component around a Halo action runtime.
 -- |
--- | The natural transformation is the application boundary: it translates the
--- | component's application monad into the `Aff` fibers owned by Halo.
+-- | The natural transformation is the application boundary: it translates `m`
+-- | into the component-owned `Aff` roots managed by Halo. It must return the
+-- | computation that performs the work rather than detach it.
 component
   :: forall props state action m
    . String

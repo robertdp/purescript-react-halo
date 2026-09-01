@@ -19,6 +19,11 @@ import React.Halo.Internal.Runtime (Runtime, activate, createRuntime, deactivate
 import React.Halo.Internal.Types (ErrorContext)
 
 -- | Configuration for `useHalo`.
+-- |
+-- | `initialState` initializes the hook once. Later `props` changes start
+-- | `handlers.onPropsChange` without recreating state. New roots use the latest
+-- | handlers, error callback, state setter, and application interpreter supplied
+-- | by a render.
 type HookSpec props state action m =
   { handlers :: Handlers props state action m
   , initialState :: state
@@ -26,7 +31,9 @@ type HookSpec props state action m =
   , props :: props
   }
 
--- | State and action dispatch exposed to rendering code.
+-- | Current component state and synchronous action dispatch exposed to
+-- | rendering code. Dispatch starts an independent handler root while the
+-- | current React activation is active.
 type HaloResult state action =
   { dispatch :: action -> Effect Unit
   , state :: state
@@ -47,10 +54,15 @@ derive instance newtypeUseHalo :: Newtype (UseHalo props state action m hooks) _
 
 -- | Run Halo inside a `react-basic-hooks` component.
 -- |
--- | The natural transformation interprets application effects in `m` into the
--- | `Aff` fibers owned by the active React scope. New handlers use the latest
--- | interpreter; roots already running retain their starting snapshot, and a
--- | fork inherits the snapshot of the root that launches it.
+-- | The natural transformation interprets application effects in `m` inside
+-- | `Aff` roots owned by the active React scope. It must return the computation
+-- | that performs the work rather than detach it. New handlers use the latest
+-- | interpreter; existing roots retain their snapshot, and a fork inherits the
+-- | snapshot of the root that launches it.
+-- |
+-- | Effect cleanup fences the activation, runs subscription cleanup, and
+-- | requests cancellation of every handler and fork. A StrictMode setup replay
+-- | creates a fresh usable activation.
 useHalo
   :: forall props state action m
    . (m ~> Aff)
