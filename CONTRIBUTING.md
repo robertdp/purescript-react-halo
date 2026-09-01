@@ -1,6 +1,6 @@
 # Contributing
 
-This guide covers local setup, validation, and pull request readiness. Start with the [README](README.md) for the public mental model, the [guide](docs/guide.md) for API usage, and the [architecture notes](docs/architecture.md) before changing runtime ownership or cancellation behavior.
+This guide covers local setup, validation, and pull request readiness. Start with the [README](README.md) for the public mental model, use the [guide index](docs/guide.md) to find the relevant usage chapter, and read the [architecture notes](docs/architecture.md) before changing runtime ownership or cancellation behavior.
 
 ## Set up the checkout
 

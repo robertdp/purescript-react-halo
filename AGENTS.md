@@ -7,7 +7,7 @@ Use this file as the repository control plane. Do not treat it as a substitute f
 For an unfamiliar task, route yourself by scope:
 
 - Read [README.md](README.md) for the product boundary and current public mental model.
-- Read [docs/guide.md](docs/guide.md) for supported usage and cancellation guidance.
+- Use the [guide index](docs/guide.md) to select the relevant public contract: [actions and state](docs/guide/actions-and-state.md), [managed work](docs/guide/managed-work.md), or [lifecycle and resources](docs/guide/lifecycle-and-resources.md).
 - Read [docs/architecture.md](docs/architecture.md) before changing runtime ownership, interpreters, concurrency, subscriptions, or error handling.
 - Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, validation, and pull request readiness.
 - Inspect [`React.Halo`](src/React/Halo.purs) and the public module that owns an API before changing its contract.

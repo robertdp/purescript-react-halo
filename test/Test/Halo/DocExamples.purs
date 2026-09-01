@@ -3,6 +3,7 @@ module Test.Halo.DocExamples where
 import Prelude
 
 import Control.Monad.Reader (ReaderT, ask, runReaderT)
+import Control.Monad.State (modify_)
 import Control.Monad.Trans.Class (lift)
 import Data.Either (Either(..))
 import Effect.Aff (Aff)
@@ -39,50 +40,37 @@ loadGreeting = AppM do
 
 type Props = { title :: String }
 
-type State =
-  { greeting :: Task.State String String
-  }
+type State = { greeting :: String }
 
-greetingSlot :: Task.Slot "greeting" State String String
-greetingSlot = Task.slot (Proxy :: Proxy "greeting")
+initialState :: State
+initialState = { greeting: "Not loaded" }
 
-data Action
-  = Load
-  | Cancel
+data Action = LoadGreeting
 
 type UI a = Halo.HaloM Props State Action AppM a
 
 handlers :: Halo.Handlers Props State Action AppM
 handlers = Halo.defaultHandlers
   { onAction = case _ of
-      Load -> Task.supersede greetingSlot do
+      LoadGreeting -> do
         greeting <- lift loadGreeting
-        pure (Right greeting)
-      Cancel -> Task.reset greetingSlot
+        modify_ _ { greeting = greeting }
   }
 
 loadButton :: Env -> Component Props
 loadButton env = Halo.component "LoadButton" (runAppM env)
-  { initialState: \_ -> { greeting: Task.idle greetingSlot }
+  { initialState: \_ -> initialState
   , handlers
   , onError: \_ error ->
-      Console.error $ "Unexpected Halo error: " <> message error
-  , render: \{ props, tasks, dispatch } ->
+      Console.error $ message error
+  , render: \{ props, state, dispatch } ->
       R.div_
         [ R.text props.title
         , R.button
-            { onClick: capture_ (dispatch Load)
-            , children: [ R.text if Task.isActive tasks greetingSlot then "Restart" else "Load" ]
+            { onClick: capture_ (dispatch LoadGreeting)
+            , children: [ R.text "Load" ]
             }
-        , R.button
-            { onClick: capture_ (dispatch Cancel)
-            , children: [ R.text "Cancel" ]
-            }
-        , R.text $ case Task.toStatus tasks greetingSlot of
-            Task.Idle -> "Not loaded"
-            Task.Active -> "Loading…"
-            Task.Failed error -> error
-            Task.Succeeded greeting -> greeting
+        , R.text state.greeting
         ]
   }
 
@@ -92,7 +80,28 @@ useExample
   -> Hook (Halo.UseHalo Props State Action AppM) (Halo.HaloResult State Action)
 useExample env props = Halo.useHalo (runAppM env)
   { props
-  , initialState: { greeting: Task.idle greetingSlot }
+  , initialState
   , handlers
   , onError: \_ _ -> pure unit
   }
+
+type SearchState = { search :: Task.State String String }
+
+searchSlot :: Task.Slot "search" SearchState String String
+searchSlot = Task.slot (Proxy :: Proxy "search")
+
+data SearchAction = Search String
+
+searchHandler
+  :: SearchAction
+  -> Halo.HaloM Unit SearchState SearchAction Aff Unit
+searchHandler = case _ of
+  Search query -> Task.supersede searchSlot do
+    pure (Right query)
+
+renderSearch :: Task.View SearchState -> String
+renderSearch tasks = case Task.toStatus tasks searchSlot of
+  Task.Idle -> "Search"
+  Task.Active -> "Searching"
+  Task.Failed error -> error
+  Task.Succeeded result -> result

@@ -1,24 +1,146 @@
 # React Halo
 
-Halo gives a PureScript React component a typed action handler, local state, and a safe boundary for application effects. Your application logic remains in its own monad; Halo adds access to props and state, action dispatch, component-owned processes, subscriptions, and cleanup.
+Halo gives a PureScript React component typed actions, local state, and a safe boundary for application effects. Application logic remains in its own monad; Halo owns the UI work started by a React component.
 
-Use Halo when several UI interactions share state and asynchronous work must remain owned by the component. For a single request derived directly from render dependencies, `React.Basic.Hooks.Aff.useAff` is usually simpler.
+Use Halo when several interactions share state or asynchronous work must be cancelled with the component. For one request derived directly from render dependencies, `React.Basic.Hooks.Aff.useAff` is usually simpler.
 
-## How Halo fits
+## Choose a React entry point
 
-A Halo component has three main parts:
+Use `component` when Halo owns the complete component:
 
-1. **Actions** describe UI interactions. Rendering code calls `dispatch :: action -> Effect Unit`, and Halo starts the corresponding action handler in the active component scope.
-2. **Application effects** remain in an application monad such as `ReaderT Env Aff`. Standard `lift` embeds those effects in `HaloM`, and an interpreter supplied at the React boundary translates them to `Aff`.
-3. **Forks** are cancellable processes owned by the active component. A fork may outlive the handler that started it, but it cannot outlive the React activation that owns it.
+```purescript
+profileComponent env =
+  Halo.component "Profile" (runAppM env)
+    { initialState
+    , handlers
+    , onError
+    , render
+    }
+```
 
-Halo does not provide global state, server caching, or a separate process runtime.
+Use `useHalo` when the render function also uses other hooks:
+
+```purescript
+halo <- Halo.useHalo (runAppM env)
+  { props
+  , initialState
+  , handlers
+  , onError
+  }
+
+-- halo.state
+-- halo.tasks
+-- halo.dispatch
+```
+
+Both entry points receive an interpreter from the application's monad to `Aff`. They expose current component state, an immutable task view, and synchronous action dispatch. `component` also passes current props to its renderer.
+
+## Understand the core model
+
+Actions describe UI events, handlers perform component work, and rendering dispatches the next action:
+
+```purescript
+data Action
+  = Rename String
+  | LoadProfile
+
+handlers = Halo.defaultHandlers
+  { onAction = case _ of
+      Rename name ->
+        modify_ _ { name = name }
+
+      LoadProfile -> do
+        profile <- lift Profile.load
+        modify_ _ { profile = Just profile }
+  }
+```
+
+`HaloM props state action m` owns component state and props while preserving application capabilities in `m`:
+
+```purescript
+type UI a = Halo.HaloM Props State Action AppM a
+
+newtype AppM a = AppM (ReaderT Env Aff a)
+
+runAppM :: Env -> AppM ~> Aff
+runAppM env (AppM program) = runReaderT program env
+```
+
+Standard transformer `lift` crosses that boundary. Each dispatched action starts an independent handler, so long-running handlers can overlap. React deactivation fences every handler before requesting cancellation.
+
+Rendering reads state and dispatches actions synchronously:
+
+```purescript
+render { state, dispatch } =
+  R.button
+    { onClick: capture_ (dispatch LoadProfile)
+    , children: [ R.text state.name ]
+    }
+```
+
+## Choose the ownership mechanism
+
+Start work directly in an action handler. Use a stronger mechanism only when the interaction needs it.
+
+| Need | Use |
+|---|---|
+| Handle one UI event | action handler |
+| Retain typed idle, active, failure, and success state | managed task |
+| Let work outlive its launching handler | component-owned fork |
+| Receive actions from an external event source | emitter subscription |
+| Release another synchronous resource | registered cleanup |
+
+A task stores a typed outcome in component state and renders through the matching task view:
+
+```purescript
+type State =
+  { search :: Task.State SearchError Results
+  }
+
+searchSlot :: Task.Slot "search" State SearchError Results
+searchSlot = Task.slot (Proxy :: Proxy "search")
+
+Search query -> Task.supersede searchSlot do
+  lift (Search.run query)
+
+case Task.toStatus tasks searchSlot of
+  Task.Idle -> renderPrompt
+  Task.Active -> renderSpinner
+  Task.Failed error -> renderError error
+  Task.Succeeded results -> renderResults results
+```
+
+`Task.slot` uses one type-level label as both record field and identity. Use `Task.slotAt` only for a nested or custom lawful focus. Task bodies remain ordinary `HaloM` values returning `Either error result`.
+
+A fork is an independently cancellable component process:
+
+```purescript
+fiber <- Halo.fork synchronize
+Halo.kill fiber
+```
+
+Subscriptions turn external callbacks into actions:
+
+```purescript
+names = Halo.makeEmitter \emit -> source.listen emit
+actions = NameChanged <$> names
+void $ Halo.subscribe actions
+```
+
+Other synchronous resources can register cleanup directly:
+
+```purescript
+cleanupId <- Halo.registerCleanup removeListener
+Halo.releaseCleanup cleanupId
+```
+
+React cleanup is synchronous. Put asynchronous release in an Aff finalizer owned by a handler, task, or fork rather than an `onDeactivate` callback.
 
 ## Install this unreleased version
 
-The API documented on this branch is not published yet; the PureScript Registry currently resolves `react-halo` to v3. This branch uses the PureScript and Spago versions pinned in [`package.json`](package.json).
+The API on this branch is not published yet; the PureScript Registry currently resolves `react-halo` to v3. This branch uses the PureScript and Spago versions pinned in [`package.json`](package.json).
 
-Add a checkout as a local Spago package and declare the dependencies imported by the example below:
+Add a checkout as a local Spago package and declare the dependencies used by your application:
 
 ```yaml
 package:
@@ -40,132 +162,16 @@ workspace:
       path: ../purescript-react-halo
 ```
 
-After v4 is published, the local override can be replaced with:
+After v4 is published, replace the local override with a registry installation:
 
 ```console
 spago install aff console effect either exceptions prelude react-basic-dom react-basic-hooks react-halo transformers
 ```
 
-`react-basic-dom` is used by this example, not required by Halo itself. Your application also needs the JavaScript packages required by `react-basic-hooks`, including React. Halo has no npm runtime entry point or npm runtime dependencies.
+`react-basic-dom` is used by the examples, not required by Halo itself. Applications also need the JavaScript packages required by `react-basic-hooks`, including React. Halo has no npm runtime entry point or npm runtime dependencies.
 
-## Quick start
+## Documentation
 
-Define an application monad and the interpreter that runs it:
+The [guide](docs/guide.md) covers complete usage and ownership choices. Generate exact API documentation from public source comments with `npx spago docs --offline`. Maintainers changing runtime ownership should also read the [architecture notes](docs/architecture.md) and [contributor guide](CONTRIBUTING.md).
 
-```purescript
-type Env = { loadGreeting :: Aff String }
-
-newtype AppM a = AppM (ReaderT Env Aff a)
-
-derive newtype instance functorAppM :: Functor AppM
-derive newtype instance applyAppM :: Apply AppM
-derive newtype instance applicativeAppM :: Applicative AppM
-derive newtype instance bindAppM :: Bind AppM
-derive newtype instance monadAppM :: Monad AppM
-derive newtype instance monadEffectAppM :: MonadEffect AppM
-derive newtype instance monadAffAppM :: MonadAff AppM
-
-runAppM :: Env -> AppM ~> Aff
-runAppM env (AppM program) = runReaderT program env
-
-loadGreeting :: AppM String
-loadGreeting = AppM do
-  env <- ask
-  liftAff env.loadGreeting
-```
-
-Define component state and an action ADT. Import `React.Halo.Task` qualified and bind each abstract task field by its record label:
-
-```purescript
-import React.Halo.Task as Task
-import Type.Proxy (Proxy(..))
-
-type Props = { title :: String }
-
-type State =
-  { greeting :: Task.State String String
-  }
-
-greetingSlot :: Task.Slot "greeting" State String String
-greetingSlot = Task.slot (Proxy :: Proxy "greeting")
-
-data Action = Load | Cancel
-
-type UI a = Halo.HaloM Props State Action AppM a
-
-handlers :: Halo.Handlers Props State Action AppM
-handlers = Halo.defaultHandlers
-  { onAction = case _ of
-      Load -> Task.supersede greetingSlot do
-        greeting <- lift loadGreeting
-        pure (Right greeting)
-
-      Cancel -> Task.reset greetingSlot
-  }
-```
-
-A slot is an opaque identity-bearing optic for one task field. `Task.slot` uses the type-level name as both the record label and task identity, so the common case needs no separate lens. `Task.slotAt` accepts a custom lawful lens for a nested focus. A slot does not store a body, input, or cancellation key. A task body is ordinary `HaloM` and returns `Either error result`. `supersede` makes the new invocation authoritative immediately; `reset` cancels active work and waits for its Aff finalizers.
-
-`lift` is `Control.Monad.Trans.Class.lift`. Each handler captures the interpreter current when it starts. Managed tasks and forks inherit their launching handler's interpreter, even if React renders with a newer interpreter before their bodies begin.
-
-Supply the interpreter when creating the component:
-
-```purescript
-loadButton :: Env -> Component Props
-loadButton env = Halo.component "LoadButton" (runAppM env)
-  { initialState: \_ ->
-      { greeting: Task.idle greetingSlot }
-  , handlers
-  , onError: \_ error ->
-      Console.error $ "Unexpected Halo error: " <> message error
-  , render: \{ props, tasks, dispatch } ->
-      R.div_
-        [ R.text props.title
-        , R.button
-            { onClick: capture_ (dispatch Load)
-            , children: [ R.text if Task.isActive tasks greetingSlot then "Restart" else "Load" ]
-            }
-        , R.button
-            { onClick: capture_ (dispatch Cancel)
-            , children: [ R.text "Cancel" ]
-            }
-        , R.text $ case Task.toStatus tasks greetingSlot of
-            Task.Idle -> "Not loaded"
-            Task.Active -> "Loading…"
-            Task.Failed error -> error
-            Task.Succeeded greeting -> greeting
-        ]
-  }
-```
-
-`state` and `tasks` come from one coherent render snapshot. `Task.State` values can be copied as ordinary component data, but only the canonical slot with matching runtime authority projects `Active`; stale, foreign, or cross-slot active values project `Idle`.
-
-`initialState` receives the initial props once per mount. Later prop changes call `handlers.onPropsChange`; they do not recreate state.
-
-Use the hook form when Halo shares a component with other hooks:
-
-```purescript
-halo <- Halo.useHalo (runAppM env)
-  { props
-  , initialState
-  , handlers
-  , onError
-  }
-
--- halo.state
--- halo.tasks
--- halo.dispatch
-```
-
-A complete version of this example is compiled as [`test/Test/Halo/DocExamples.purs`](test/Test/Halo/DocExamples.purs).
-
-For a synchronous resource that is not an emitter subscription, use `Halo.registerCleanup cleanup`. Halo runs every still-registered `Effect Unit` when the React activation deactivates. `Halo.releaseCleanup id` removes and runs one cleanup immediately; it is not an asynchronous deactivation callback.
-
-## Learn more
-
-- The [Halo guide](docs/guide.md) explains tasks, component processes, cleanup, cancellation, parallelism, subscriptions, and errors.
-- Generate the exact API reference from public source comments with `npx spago docs --offline`.
-- The [runtime architecture](docs/architecture.md) describes ownership and cancellation invariants for maintainers.
-- See [Contributing](CONTRIBUTING.md) before changing the library.
-
-The deterministic tests model React's setup-cleanup-setup sequence directly. The repository does not yet include a real DOM/StrictMode mounting fixture.
+Halo does not provide global state, server caching, backpressure queues, or a detached scheduler. The deterministic suite models React setup-cleanup-setup at the runtime boundary; the repository does not yet contain a real DOM/StrictMode mounting fixture.
