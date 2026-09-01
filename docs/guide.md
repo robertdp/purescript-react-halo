@@ -94,6 +94,64 @@ onPropsChange = \previous -> do
 
 Capture props before asynchronous work when that work must use one render's value. Otherwise, a later `getProps` intentionally returns newer props.
 
+## Store typed task outcomes in component state
+
+Import `React.Halo.Task` qualified when component state should retain the lifecycle and typed result of owned work. `Task.State error result` is abstract because it includes hidden cancellation identity. Locate it with a standard lens:
+
+```purescript
+import Data.Lens (Lens')
+import Data.Lens.Record (prop)
+import React.Halo.Task as Task
+import Type.Proxy (Proxy(..))
+
+type State =
+  { search :: Task.State SearchError Results
+  , query :: String
+  }
+
+searchLens :: Lens' State (Task.State SearchError Results)
+searchLens = prop (Proxy :: Proxy "search")
+
+initialState =
+  { search: Task.idle
+  , query: ""
+  }
+```
+
+A policy body remains ordinary `HaloM` and returns `Either error result`. It may update other component state. Halo atomically stores a matching `Left` as `Failed` or `Right` as `Succeeded`:
+
+```purescript
+Search query -> Task.supersede searchLens do
+  modify_ _ { query = query }
+  lift (Search.run query)
+
+CancelSearch -> Task.reset searchLens
+```
+
+Choose a policy by invocation semantics:
+
+- `once lens body` starts only from `Idle`; success and typed failure remain terminal until `reset`.
+- `startIfInactive lens body` ignores a call while active, but starts from `Idle`, `Failed`, or `Succeeded`.
+- `supersede lens body` makes every new call authoritative immediately. Prior work is fenced and cancellation is requested without waiting, so its finalizers may overlap the new body but cannot commit Halo state or begin another lifted application effect.
+- `debounce lens milliseconds body` is trailing-edge latest-wins. Its private timer and body both render as `Active`; a new call cancels either phase. Nonpositive durations use a scheduled zero delay.
+- `reset lens` publishes `Idle`, cancels active work, and waits for its Aff finalizers. Terminal state is cleared immediately.
+
+Render through the read-only projection:
+
+```purescript
+case Task.toStatus state.search of
+  Task.Idle -> renderPrompt
+  Task.Active -> renderSpinner
+  Task.Failed error -> renderError error
+  Task.Succeeded results -> renderResults results
+```
+
+`Task.asStatus` is a standard read-only getter, and `_Idle`, `_Active`, `_Failed`, and `_Succeeded` are lawful prisms over `Task.Status`. `Task.toMaybe` returns only a succeeded result; `Task.isActive` covers both the private debounce timer and the executing body.
+
+Expected failures belong in `Either`. An unexpected exception returns the matching task to `Idle` and is reported through the latest `onError` as `ForkError`. Cancellation is neither a typed failure nor an unexpected error. Put retry policy in AppM and lift the already-retrying computation; when nested under `debounce`, the debounce timer runs once and AppM then owns its attempts. A retry loop must let Aff cancellation propagate rather than catching every exception.
+
+Task state is component-owned result storage, not a global cache. Calls do not retain an input or computation for later reruns.
+
 ## Start and kill component processes
 
 `Halo.fork child` starts a process owned by the current React activation and returns a `ForkId`. The process may outlive the handler that created it:
@@ -123,10 +181,13 @@ Choose cleanup according to the resource:
 
 - **Component process:** acquire and use the resource inside `fork` with an Aff finalizer. Deactivation requests cancellation of the fork.
 - **Event source:** return synchronous cleanup from `makeEmitter`; Halo runs it while deactivating the subscription scope.
+- **Other synchronous resource:** call `registerCleanup cleanup`. Call `releaseCleanup id` to remove and run it early.
 - **User cancellation:** retain the `ForkId` and call `kill`, which waits for finalizers.
 - **Persistence:** save during normal application flow. Do not rely on unmount completing asynchronous persistence.
 
-Deactivation first fences the activation, then runs subscription cleanup and requests cancellation of handlers and forks. React cannot wait for those Aff cancellations, but their finalizers cannot commit Halo state or begin new lifted effects after the fence.
+`registerCleanup` accepts only `Effect Unit`, not `HaloM`, AppM, or `Aff`. `releaseCleanup` removes tracking before invoking the effect, so a throw is reported in the current root's error context and is not retried. Unknown and already released IDs are ignored.
+
+Deactivation first fences the activation, then attempts every generic cleanup and subscription cleanup before requesting cancellation of handlers, forks, and tasks. A cleanup throw is reported as `DeactivationError` through the latest `onError` without blocking the other resources. No ordering between generic and subscription cleanup is part of the API. React cannot wait for Aff cancellation, but finalizers cannot commit Halo state or begin new lifted effects after the fence.
 
 ## Run independent work in parallel
 

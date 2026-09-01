@@ -33,7 +33,7 @@ The documentation command writes generated API pages to `generated-docs/`. Spago
 
 ## Keep behavior, tests, and docs aligned
 
-`React.Halo` is the public API root. When a change affects its exported types or behavior:
+`React.Halo` is the public API root; the generic state-focused names in `React.Halo.Task` form a separate qualified surface. When a change affects either module's exported types or behavior:
 
 - update the relevant public module documentation;
 - update the README or guide when their guidance changes, and keep exact API contracts in public source comments used by generated documentation;

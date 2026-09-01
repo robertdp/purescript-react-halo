@@ -26,10 +26,12 @@ package:
     - aff
     - console
     - effect
+    - either
     - exceptions
     - foldable-traversable
     - maybe
     - prelude
+    - profunctor-lenses
     - react-basic-dom
     - react-basic-hooks
     - react-halo
@@ -44,7 +46,7 @@ workspace:
 After v4 is published, the local override can be replaced with:
 
 ```console
-spago install aff console effect exceptions foldable-traversable maybe prelude react-basic-dom react-basic-hooks react-halo transformers
+spago install aff console effect either exceptions foldable-traversable maybe prelude profunctor-lenses react-basic-dom react-basic-hooks react-halo transformers
 ```
 
 `react-basic-dom` is used by this example, not required by Halo itself. Your application also needs the JavaScript packages required by `react-basic-hooks`, including React. Halo has no npm runtime entry point or npm runtime dependencies.
@@ -75,16 +77,22 @@ loadGreeting = AppM do
   liftAff env.loadGreeting
 ```
 
-Define component state and an action ADT. Store a `ForkId` when another action must be able to cancel the process:
+Define component state and an action ADT. Import `React.Halo.Task` qualified and locate its abstract state with a standard lens:
 
 ```purescript
+import Data.Lens (Lens')
+import Data.Lens.Record (prop)
+import React.Halo.Task as Task
+import Type.Proxy (Proxy(..))
+
 type Props = { title :: String }
 
 type State =
-  { fiber :: Maybe Halo.ForkId
-  , loading :: Boolean
-  , result :: Maybe String
+  { greeting :: Task.State String String
   }
+
+greetingLens :: Lens' State (Task.State String String)
+greetingLens = prop (Proxy :: Proxy "greeting")
 
 data Action = Load | Cancel
 
@@ -93,23 +101,17 @@ type UI a = Halo.HaloM Props State Action AppM a
 handlers :: Halo.Handlers Props State Action AppM
 handlers = Halo.defaultHandlers
   { onAction = case _ of
-      Load -> do
-        previous <- gets _.fiber
-        traverse_ Halo.kill previous
-        fiber <- Halo.fork do
-          modify_ _ { loading = true, result = Nothing }
-          result <- lift loadGreeting
-          modify_ _ { loading = false, result = Just result }
-        modify_ _ { fiber = Just fiber }
+      Load -> Task.supersede greetingLens do
+        greeting <- lift loadGreeting
+        pure (Right greeting)
 
-      Cancel -> do
-        previous <- gets _.fiber
-        traverse_ Halo.kill previous
-        modify_ _ { fiber = Nothing, loading = false }
+      Cancel -> Task.reset greetingLens
   }
 ```
 
-`lift` is `Control.Monad.Trans.Class.lift`. Each handler captures the interpreter current when it starts. A fork inherits its launching handler's interpreter, even if React renders with a newer interpreter before the fork begins.
+A task body is ordinary `HaloM` and returns `Either error result`. `supersede` makes the new invocation authoritative immediately; `reset` cancels active work and waits for its Aff finalizers. Rendering sees only `Idle`, `Active`, `Failed error`, or `Succeeded result`; hidden run identity prevents stale completion from overwriting newer state.
+
+`lift` is `Control.Monad.Trans.Class.lift`. Each handler captures the interpreter current when it starts. Managed tasks and forks inherit their launching handler's interpreter, even if React renders with a newer interpreter before their bodies begin.
 
 Supply the interpreter when creating the component:
 
@@ -117,7 +119,7 @@ Supply the interpreter when creating the component:
 loadButton :: Env -> Component Props
 loadButton env = Halo.component "LoadButton" (runAppM env)
   { initialState: \_ ->
-      { fiber: Nothing, loading: false, result: Nothing }
+      { greeting: Task.idle }
   , handlers
   , onError: \_ error ->
       Console.error $ "Unexpected Halo error: " <> message error
@@ -126,15 +128,17 @@ loadButton env = Halo.component "LoadButton" (runAppM env)
         [ R.text props.title
         , R.button
             { onClick: capture_ (dispatch Load)
-            , children: [ R.text if state.loading then "Restart" else "Load" ]
+            , children: [ R.text if Task.isActive state.greeting then "Restart" else "Load" ]
             }
         , R.button
             { onClick: capture_ (dispatch Cancel)
             , children: [ R.text "Cancel" ]
             }
-        , R.text $ case state.result of
-            Nothing -> if state.loading then "Loading…" else "Not loaded"
-            Just greeting -> greeting
+        , R.text $ case Task.toStatus state.greeting of
+            Task.Idle -> "Not loaded"
+            Task.Active -> "Loading…"
+            Task.Failed error -> error
+            Task.Succeeded greeting -> greeting
         ]
   }
 ```
@@ -157,9 +161,11 @@ halo <- Halo.useHalo (runAppM env)
 
 A complete version of this example is compiled as [`test/Test/Halo/DocExamples.purs`](test/Test/Halo/DocExamples.purs).
 
+For a synchronous resource that is not an emitter subscription, use `Halo.registerCleanup cleanup`. Halo runs every still-registered `Effect Unit` when the React activation deactivates. `Halo.releaseCleanup id` removes and runs one cleanup immediately; it is not an asynchronous deactivation callback.
+
 ## Learn more
 
-- The [Halo guide](docs/guide.md) explains actions, state, component processes, cancellation, parallelism, subscriptions, and errors.
+- The [Halo guide](docs/guide.md) explains tasks, component processes, cleanup, cancellation, parallelism, subscriptions, and errors.
 - Generate the exact API reference from public source comments with `npx spago docs --offline`.
 - The [runtime architecture](docs/architecture.md) describes ownership and cancellation invariants for maintainers.
 - See [Contributing](CONTRIBUTING.md) before changing the library.

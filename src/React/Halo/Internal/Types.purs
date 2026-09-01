@@ -1,10 +1,21 @@
 module React.Halo.Internal.Types
-  ( ErrorContext(..)
+  ( CleanupId(..)
+  , ErrorContext(..)
   , ForkId(..)
   , SubscriptionId(..)
   ) where
 
 import Prelude
+
+-- | Identifies synchronous cleanup in one React activation. Its constructor is
+-- | hidden from the root `React.Halo` API.
+newtype CleanupId = CleanupId Int
+
+derive newtype instance eqCleanupId :: Eq CleanupId
+
+derive newtype instance ordCleanupId :: Ord CleanupId
+
+derive newtype instance showCleanupId :: Show CleanupId
 
 -- | Identifies the component-owned computation or cleanup whose unexpected
 -- | failure reached `onError`.

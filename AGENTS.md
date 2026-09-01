@@ -17,7 +17,7 @@ Before changing dependencies or developer commands, inspect `package.json`, `spa
 
 ## Preserve repository boundaries
 
-- Keep `React.Halo` as the intentional public API root. Do not expose internal runtime ownership types as a shortcut.
+- Keep `React.Halo` as the intentional public API root. Keep the state-focused API in the separately qualified `React.Halo.Task`; do not flatten its generic names through the root. Do not expose internal runtime ownership types as a shortcut.
 - Keep React integration in the component/hook boundary and runtime ownership in `React.Halo.Internal.Runtime`. Read the architecture document instead of duplicating its rules here.
 - Keep application capabilities routed through the application monad and its `m ~> Aff` interpreter.
 - Do not add npm runtime dependencies or an npm runtime entry point. The npm package is development tooling only.

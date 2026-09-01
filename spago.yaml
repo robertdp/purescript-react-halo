@@ -18,6 +18,7 @@ package:
     - ordered-collections
     - parallel
     - prelude
+    - profunctor-lenses
     - react-basic-hooks
     - refs
     - transformers

@@ -3,10 +3,10 @@ module Test.Halo.DocExamples where
 import Prelude
 
 import Control.Monad.Reader (ReaderT, ask, runReaderT)
-import Control.Monad.State (gets, modify_)
 import Control.Monad.Trans.Class (lift)
-import Data.Foldable (traverse_)
-import Data.Maybe (Maybe(..))
+import Data.Either (Either(..))
+import Data.Lens (Lens')
+import Data.Lens.Record (prop)
 import Effect.Aff (Aff)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect)
@@ -16,6 +16,8 @@ import React.Basic.DOM as R
 import React.Basic.DOM.Events (capture_)
 import React.Basic.Hooks (Component, Hook)
 import React.Halo as Halo
+import React.Halo.Task as Task
+import Type.Proxy (Proxy(..))
 
 type Env = { loadGreeting :: Aff String }
 
@@ -40,10 +42,11 @@ loadGreeting = AppM do
 type Props = { title :: String }
 
 type State =
-  { fiber :: Maybe Halo.ForkId
-  , loading :: Boolean
-  , result :: Maybe String
+  { greeting :: Task.State String String
   }
+
+greetingLens :: Lens' State (Task.State String String)
+greetingLens = prop (Proxy :: Proxy "greeting")
 
 data Action
   = Load
@@ -54,23 +57,15 @@ type UI a = Halo.HaloM Props State Action AppM a
 handlers :: Halo.Handlers Props State Action AppM
 handlers = Halo.defaultHandlers
   { onAction = case _ of
-      Load -> do
-        previous <- gets _.fiber
-        traverse_ Halo.kill previous
-        fiber <- Halo.fork do
-          modify_ _ { loading = true, result = Nothing }
-          result <- lift loadGreeting
-          modify_ _ { loading = false, result = Just result }
-        modify_ _ { fiber = Just fiber }
-      Cancel -> do
-        previous <- gets _.fiber
-        traverse_ Halo.kill previous
-        modify_ _ { fiber = Nothing, loading = false }
+      Load -> Task.supersede greetingLens do
+        greeting <- lift loadGreeting
+        pure (Right greeting)
+      Cancel -> Task.reset greetingLens
   }
 
 loadButton :: Env -> Component Props
 loadButton env = Halo.component "LoadButton" (runAppM env)
-  { initialState: \_ -> { fiber: Nothing, loading: false, result: Nothing }
+  { initialState: \_ -> { greeting: Task.idle }
   , handlers
   , onError: \_ error ->
       Console.error $ "Unexpected Halo error: " <> message error
@@ -79,15 +74,17 @@ loadButton env = Halo.component "LoadButton" (runAppM env)
         [ R.text props.title
         , R.button
             { onClick: capture_ (dispatch Load)
-            , children: [ R.text if state.loading then "Restart" else "Load" ]
+            , children: [ R.text if Task.isActive state.greeting then "Restart" else "Load" ]
             }
         , R.button
             { onClick: capture_ (dispatch Cancel)
             , children: [ R.text "Cancel" ]
             }
-        , R.text $ case state.result of
-            Nothing -> if state.loading then "Loading…" else "Not loaded"
-            Just greeting -> greeting
+        , R.text $ case Task.toStatus state.greeting of
+            Task.Idle -> "Not loaded"
+            Task.Active -> "Loading…"
+            Task.Failed error -> error
+            Task.Succeeded greeting -> greeting
         ]
   }
 
@@ -97,7 +94,7 @@ useExample
   -> Hook (Halo.UseHalo Props State Action AppM) (Halo.HaloResult State Action)
 useExample env props = Halo.useHalo (runAppM env)
   { props
-  , initialState: { fiber: Nothing, loading: false, result: Nothing }
+  , initialState: { greeting: Task.idle }
   , handlers
   , onError: \_ _ -> pure unit
   }

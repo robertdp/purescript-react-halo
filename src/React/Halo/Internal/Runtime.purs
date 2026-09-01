@@ -10,6 +10,10 @@ module React.Halo.Internal.Runtime
   , fork
   , getProps
   , kill
+  , managedReset
+  , managedStart
+  , registerCleanup
+  , releaseCleanup
   , subscribe
   , subscribeWithId
   , syncSpec
@@ -42,7 +46,7 @@ import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Exception as Exception
 import Effect.Ref (Ref)
 import Effect.Ref as Ref
-import React.Halo.Internal.Types (ErrorContext(..), ForkId(..), SubscriptionId(..))
+import React.Halo.Internal.Types (CleanupId(..), ErrorContext(..), ForkId(..), SubscriptionId(..))
 import React.Halo.Subscription (Emitter)
 import React.Halo.Subscription as Subscription
 import Unsafe.Reference (unsafeRefEq)
@@ -141,6 +145,7 @@ newtype RunInAff m = RunInAff (m ~> Aff)
 
 newtype Runtime props state action m = Runtime
   { fresh :: Ref Int
+  , needsStatePublish :: Ref Boolean
   , props :: Ref props
   , runInAff :: Ref (RunInAff m)
   , scope :: Ref (Maybe Scope)
@@ -151,6 +156,7 @@ newtype Runtime props state action m = Runtime
 
 newtype Scope = Scope
   { active :: Ref Boolean
+  , cleanups :: Ref (Map CleanupId (Effect Unit))
   , forks :: Ref (Map ForkId Root)
   , generation :: Int
   , handlers :: Ref (Map Int Root)
@@ -162,6 +168,7 @@ newtype Owner = Owner
 
 newtype Root = Root
   { fiber :: Fiber Unit
+  , onDeactivate :: Effect Unit
   , owner :: Owner
   }
 
@@ -189,6 +196,7 @@ createRuntime
   -> Effect (Runtime props state action m)
 createRuntime runInAff input = do
   freshRef <- Ref.new 0
+  needsStatePublish <- Ref.new false
   propsRef <- Ref.new input.initialProps
   runInAffRef <- Ref.new (RunInAff runInAff)
   scope <- Ref.new Nothing
@@ -197,6 +205,7 @@ createRuntime runInAff input = do
   stateUpdate <- Ref.new input.stateUpdate
   pure $ Runtime
     { fresh: freshRef
+    , needsStatePublish
     , props: propsRef
     , runInAff: runInAffRef
     , scope
@@ -228,11 +237,13 @@ activate runtime@(Runtime state) = do
     Nothing -> do
       generation <- fresh runtime
       active <- Ref.new true
+      cleanups <- Ref.new Map.empty
       forks <- Ref.new Map.empty
       handlers <- Ref.new Map.empty
       subscriptions <- Ref.new Map.empty
-      let scope = Scope { active, forks, generation, handlers, subscriptions }
+      let scope = Scope { active, cleanups, forks, generation, handlers, subscriptions }
       Ref.write (Just scope) state.scope
+      publishRuntimeState runtime
       spec <- Ref.read state.spec
       startHandler runtime scope ActivationError spec.handlers.onActivate
 
@@ -247,13 +258,16 @@ deactivate (Runtime state) = do
 
       handlers <- takeRef current.handlers Map.empty
       forks <- takeRef current.forks Map.empty
+      cleanups <- takeRef current.cleanups Map.empty
       subscriptions <- takeRef current.subscriptions Map.empty
       let roots = Map.values handlers <> Map.values forks
 
-      -- Fence every root before invoking foreign cleanup or requesting
-      -- cooperative Aff cancellation.
+      -- Fence every root before normalizing managed state, invoking foreign
+      -- cleanup, or requesting cooperative Aff cancellation.
       traverse_ fenceRoot roots
-      cleanupResults <- traverse Exception.try (Map.values subscriptions)
+      traverse_ runRootDeactivation roots
+      cleanupResults <- traverse Exception.try
+        (Map.values cleanups <> Map.values subscriptions)
       traverse_ requestCancel roots
 
       -- A faulty external cleanup must not prevent any other cleanup request.
@@ -324,9 +338,13 @@ fork child = HaloM $ ReaderT \execution -> do
   fid <- liftEffect $ ForkId <$> fresh execution.runtime
   current <- liftEffect $ isCurrent execution
   when current do
-    prepared <- liftEffect $ prepare execution.runInAff execution.runtime execution.scope (ForkError fid) child do
-      let Scope scope = execution.scope
-      Ref.modify_ (Map.delete fid) scope.forks
+    prepared <- liftEffect $ prepare execution.runInAff execution.runtime execution.scope (ForkError fid) child
+      { onComplete: do
+          let Scope scope = execution.scope
+          Ref.modify_ (Map.delete fid) scope.forks
+      , onDeactivate: pure unit
+      , onUnexpected: pure unit
+      }
     liftEffect do
       let Scope scope = execution.scope
       Ref.modify_ (Map.insert fid prepared.root) scope.forks
@@ -360,6 +378,140 @@ kill fid = HaloM $ ReaderT \execution -> do
           cancelRootAff forkRoot
       )
       root
+
+-- Internal managed roots support state-focused lifecycle APIs without exposing
+-- root identity. Claiming state, fencing prior work, registering the new root,
+-- and opening its start gate happen in one synchronous runtime transaction.
+managedStart
+  :: forall props state action m
+   . Maybe (Aff Unit)
+  -> ( Int
+       -> ForkId
+       -> state
+       -> Maybe
+            { cancel :: Maybe ForkId
+            , computation :: HaloM props state action m Unit
+            , onExit :: state -> Maybe state
+            , state :: state
+            }
+     )
+  -> HaloM props state action m Unit
+managedStart privateDelay claim = HaloM $ ReaderT \execution ->
+  liftEffect do
+    current <- isCurrent execution
+    when current do
+      fid <- ForkId <$> fresh execution.runtime
+      let Scope scope = execution.scope
+      oldState <- readRuntimeState execution.runtime
+      case claim scope.generation fid oldState of
+        Nothing -> pure unit
+        Just managed -> do
+          let
+            applyExit publish = applyManagedState publish execution.runtime managed.onExit
+          prepared <- prepare execution.runInAff execution.runtime execution.scope (ForkError fid)
+            (withPrivateDelay privateDelay managed.computation)
+            { onComplete: Ref.modify_ (Map.delete fid) scope.forks
+            , onDeactivate: applyExit false
+            , onUnexpected: applyExit true
+            }
+          previous <- Ref.modify'
+            ( \forks ->
+                { state: case managed.cancel of
+                    Nothing -> forks
+                    Just cancelId -> Map.delete cancelId forks
+                , value: managed.cancel >>= flip Map.lookup forks
+                }
+            )
+            scope.forks
+          traverse_ fenceRoot previous
+          writeRuntimeState execution.runtime managed.state
+          Ref.modify_ (Map.insert fid prepared.root) scope.forks
+          update <- readStateUpdate execution.runtime
+          update managed.state
+          traverse_ requestCancel previous
+          prepared.start
+
+-- Stop managed work after atomically publishing its replacement state. A root
+-- that resets itself is cancelled by unwinding its own fiber rather than trying
+-- to join itself.
+managedReset
+  :: forall props state action m
+   . ( Int
+       -> state
+       -> Maybe
+            { cancel :: Maybe ForkId
+            , state :: state
+            }
+     )
+  -> HaloM props state action m Unit
+managedReset transition = HaloM $ ReaderT \execution -> do
+  current <- liftEffect $ isCurrent execution
+  when current do
+    root <- liftEffect do
+      let Scope scope = execution.scope
+      oldState <- readRuntimeState execution.runtime
+      case transition scope.generation oldState of
+        Nothing -> pure Nothing
+        Just next -> do
+          previous <- Ref.modify'
+            ( \forks ->
+                { state: case next.cancel of
+                    Nothing -> forks
+                    Just cancelId -> Map.delete cancelId forks
+                , value: next.cancel >>= flip Map.lookup forks
+                }
+            )
+            scope.forks
+          traverse_ fenceRoot previous
+          writeRuntimeState execution.runtime next.state
+          update <- readStateUpdate execution.runtime
+          update next.state
+          pure previous
+    traverse_
+      ( \managedRoot ->
+          if sameOwner execution.owner managedRoot then
+            Aff.throwError scopeCancellationError
+          else cancelRootAff managedRoot
+      )
+      root
+
+-- | Register synchronous `Effect` cleanup in the current activation scope.
+-- |
+-- | Deactivation attempts every remaining cleanup after fencing scope roots.
+-- | Cleanup failures are isolated and reported as `DeactivationError` through
+-- | the latest error callback.
+registerCleanup
+  :: forall props state action m
+   . Effect Unit
+  -> HaloM props state action m CleanupId
+registerCleanup cleanup = HaloM $ ReaderT \execution -> do
+  cid <- liftEffect $ CleanupId <$> fresh execution.runtime
+  current <- liftEffect $ isCurrent execution
+  when current do
+    liftEffect do
+      let Scope scope = execution.scope
+      Ref.modify_ (Map.insert cid cleanup) scope.cleanups
+  pure cid
+
+-- | Remove tracked cleanup before running it. Unknown or already released IDs
+-- | are ignored. A throwing cleanup cannot be retried during deactivation and
+-- | follows the error context of the handler or fork that releases it.
+releaseCleanup
+  :: forall props state action m
+   . CleanupId
+  -> HaloM props state action m Unit
+releaseCleanup cid = HaloM $ ReaderT \execution -> do
+  current <- liftEffect $ isCurrent execution
+  when current do
+    let Scope scope = execution.scope
+    cleanup <- liftEffect $ Ref.modify'
+      ( \cleanups ->
+          { state: Map.delete cid cleanups
+          , value: Map.lookup cid cleanups
+          }
+      )
+      scope.cleanups
+    liftEffect $ traverse_ identity cleanup
 
 -- | Register an action emitter in the current activation scope.
 -- |
@@ -420,8 +572,11 @@ startHandler
 startHandler runtime@(Runtime state) scope@(Scope current) context computation = do
   runId <- fresh runtime
   runInAff <- Ref.read state.runInAff
-  prepared <- prepare runInAff runtime scope context computation do
-    Ref.modify_ (Map.delete runId) current.handlers
+  prepared <- prepare runInAff runtime scope context computation
+    { onComplete: Ref.modify_ (Map.delete runId) current.handlers
+    , onDeactivate: pure unit
+    , onUnexpected: pure unit
+    }
   Ref.modify_ (Map.insert runId prepared.root) current.handlers
   prepared.start
 
@@ -432,9 +587,12 @@ prepare
   -> Scope
   -> ErrorContext props action
   -> HaloM props state action m Unit
-  -> Effect Unit
+  -> { onComplete :: Effect Unit
+     , onDeactivate :: Effect Unit
+     , onUnexpected :: Effect Unit
+     }
   -> Effect Prepared
-prepare runInAff runtime scope context computation onComplete = do
+prepare runInAff runtime scope context computation hooks = do
   owner <- createOwner
   gate <- EffectAVar.empty
   fiber <- Aff.launchAff do
@@ -443,7 +601,7 @@ prepare runInAff runtime scope context computation onComplete = do
       ( liftEffect do
           let Owner current = owner
           Ref.write false current.alive
-          onComplete
+          hooks.onComplete
       )
       do
         outcome <- Aff.attempt $ Aff.supervise $
@@ -452,12 +610,13 @@ prepare runInAff runtime scope context computation onComplete = do
           Left error -> do
             current <- liftEffect $ isCurrent { context, owner, runInAff, runtime, scope }
             when current do
+              liftEffect hooks.onUnexpected
               let Runtime state = runtime
               spec <- liftEffect $ Ref.read state.spec
               liftEffect $ spec.onError context error
           Right _ -> pure unit
   pure
-    { root: Root { fiber, owner }
+    { root: Root { fiber, onDeactivate: hooks.onDeactivate, owner }
     , start: Aff.launchAff_ (AVar.put unit gate)
     }
 
@@ -469,6 +628,53 @@ runHaloM
 runHaloM execution (HaloM computation) = case computation of
   ReaderT run -> run execution
 
+withPrivateDelay
+  :: forall props state action m a
+   . Maybe (Aff Unit)
+  -> HaloM props state action m a
+  -> HaloM props state action m a
+withPrivateDelay privateDelay computation = HaloM $ ReaderT \execution -> do
+  traverse_ identity privateDelay
+  runHaloM execution computation
+
+applyManagedState
+  :: forall props state action m
+   . Boolean
+  -> Runtime props state action m
+  -> (state -> Maybe state)
+  -> Effect Unit
+applyManagedState publish (Runtime current) transition = do
+  oldState <- Ref.read current.state
+  case transition oldState of
+    Nothing -> pure unit
+    Just newState -> do
+      Ref.write newState current.state
+      if publish then do
+        update <- Ref.read current.stateUpdate
+        update newState
+      else Ref.write true current.needsStatePublish
+
+publishRuntimeState :: forall props state action m. Runtime props state action m -> Effect Unit
+publishRuntimeState (Runtime runtime) = do
+  needsPublish <- Ref.read runtime.needsStatePublish
+  when needsPublish do
+    Ref.write false runtime.needsStatePublish
+    currentState <- Ref.read runtime.state
+    update <- Ref.read runtime.stateUpdate
+    update currentState
+
+readRuntimeState :: forall props state action m. Runtime props state action m -> Effect state
+readRuntimeState (Runtime runtime) = Ref.read runtime.state
+
+writeRuntimeState :: forall props state action m. Runtime props state action m -> state -> Effect Unit
+writeRuntimeState (Runtime runtime) = flip Ref.write runtime.state
+
+readStateUpdate
+  :: forall props state action m
+   . Runtime props state action m
+  -> Effect (state -> Effect Unit)
+readStateUpdate (Runtime runtime) = Ref.read runtime.stateUpdate
+
 createOwner :: Effect Owner
 createOwner = do
   alive <- Ref.new true
@@ -478,6 +684,13 @@ fenceRoot :: Root -> Effect Unit
 fenceRoot (Root root) = do
   let Owner owner = root.owner
   Ref.write false owner.alive
+
+runRootDeactivation :: Root -> Effect Unit
+runRootDeactivation (Root root) = root.onDeactivate
+
+sameOwner :: Owner -> Root -> Boolean
+sameOwner (Owner left) (Root right) = case right.owner of
+  Owner owner -> unsafeRefEq left.alive owner.alive
 
 requestCancel :: Root -> Effect Unit
 requestCancel root = Aff.launchAff_ (cancelRootAff root)
