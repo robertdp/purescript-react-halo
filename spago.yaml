@@ -8,7 +8,6 @@ package:
       githubRepo: purescript-react-halo
   dependencies:
     - aff
-    - arrays
     - avar
     - effect
     - either
@@ -17,6 +16,7 @@ package:
     - maybe
     - newtype
     - ordered-collections
+    - parallel
     - prelude
     - react-basic-hooks
     - refs
@@ -29,7 +29,6 @@ package:
       - console
       - control
       - exceptions
-      - parallel
       - react-basic-dom
       - spec
       - spec-node

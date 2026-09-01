@@ -1,7 +1,7 @@
 {
   "name": "purescript-react-halo",
   "version": "4.0.0",
-  "description": "Race-safe action and effect scheduling for PureScript React components",
+  "description": "Scoped action handling and application effects for PureScript React components",
   "scripts": {
     "build": "spago build",
     "format": "npx --yes purs-tidy@0.11.1 format-in-place src test",

@@ -3,8 +3,10 @@ module Test.Halo.ScopeHandlerSpec (spec) where
 import Prelude
 
 import Control.Monad.State (modify_)
+import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
+import Effect.Aff (Aff)
 import Effect.Aff as Aff
 import Effect.Aff.AVar as AVar
 import Effect.Aff.Class (liftAff)
@@ -12,70 +14,94 @@ import Effect.AVar (AVar)
 import Effect.AVar as EffectAVar
 import Effect.Class (liftEffect)
 import Effect.Ref as Ref
-import React.Halo as Halo
 import React.Halo.Handlers (defaultHandlers)
-import React.Halo.Internal.Runtime (HaloM, Runtime, activate, createRuntime, deactivate, dispatch, fork, getProps, syncSpec, updateProps)
-import Test.Halo.Helpers (Action(..), Gate, Key(..), await, awaitCounts, makeGate, release, shouldNotHaveStarted, withHarness, work)
+import React.Halo.Internal.Runtime (Runtime, activate, createRuntime, deactivate, dispatch, fork, getProps, kill, syncSpec, updateProps)
+import React.Halo.Internal.Types (ForkId)
+import Test.Halo.Helpers (Gate, await, makeGate, release, shouldNotHaveStarted, waitForGate)
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual)
 
+identityAff :: Aff ~> Aff
+identityAff = identity
+
 spec :: Spec Unit
-spec = describe "scope and handlers" do
-  it "cancels explicit tasks on deactivation and accepts work after reactivation" $ withHarness \harness -> do
-    running <- liftEffect makeGate
-    queued <- liftEffect makeGate
+spec = describe "scope, handlers, and component-owned forks" do
+  it "cancels roots on deactivation and accepts work after reactivation" do
+    forkGate <- liftEffect makeGate
+    forkId <- liftEffect EffectAVar.empty
+    handlerDone <- liftEffect EffectAVar.empty
+    pulseDone <- liftEffect EffectAVar.empty
+    state <- liftEffect $ Ref.new 0
+    runtime <- liftEffect $
+      ( createRuntime identityAff
+          { initialProps: unit
+          , initialState: 0
+          , spec:
+              { handlers: defaultHandlers
+                  { onAction = case _ of
+                      StartScopedFork gate fid completed -> do
+                        child <- fork do
+                          liftAff $ waitForGate gate
+                          modify_ (_ + 1)
+                        liftAff $ void $ AVar.tryPut child fid
+                        liftAff $ void $ AVar.tryPut unit completed
+                      Pulse completed -> do
+                        modify_ (_ + 10)
+                        liftAff $ void $ AVar.tryPut unit completed
+                  }
+              , onError: \_ _ -> pure unit
+              }
+          , stateUpdate: flip Ref.write state
+          } :: Effect (Runtime Unit Int ScopeAction Aff)
+      )
+
+    liftEffect do
+      activate runtime
+      dispatch runtime (StartScopedFork forkGate forkId handlerDone)
+    void $ await "fork id" forkId
+    void $ await "launching handler completion" handlerDone
+    void $ await "fork before deactivation" forkGate.started
+
+    liftEffect $ deactivate runtime
+    void $ await "fork cancellation on deactivation" forkGate.settled
+    valueAfterDeactivate <- liftEffect $ Ref.read state
+    valueAfterDeactivate `shouldEqual` 0
+
     ignored <- liftEffect makeGate
-
-    let task = Halo.enqueue Save work
-    liftEffect do
-      dispatch harness.runtime (Perform task { value: 1, gate: running })
-      dispatch harness.runtime (Perform task { value: 2, gate: queued })
-    void $ await "running task before deactivation" running.started
-    awaitCounts harness { running: 1, queued: 1 }
-
-    liftEffect $ deactivate harness.runtime
-    void $ await "running task cancellation on deactivation" running.settled
-    awaitCounts harness { running: 0, queued: 0 }
-    shouldNotHaveStarted queued
-
-    let ignoredTask = Halo.concurrent Search work
-    liftEffect $ dispatch harness.runtime (Perform ignoredTask { value: 3, gate: ignored })
+    ignoredId <- liftEffect EffectAVar.empty
+    ignoredDone <- liftEffect EffectAVar.empty
+    liftEffect $ dispatch runtime (StartScopedFork ignored ignoredId ignoredDone)
     shouldNotHaveStarted ignored
-    state <- liftEffect $ Ref.read harness.state
-    state `shouldEqual` []
 
-    reactivated <- liftEffect makeGate
     liftEffect do
-      activate harness.runtime
-      dispatch harness.runtime (Perform ignoredTask { value: 4, gate: reactivated })
-    void $ await "task start after reactivation" reactivated.started
-    release reactivated
-    void $ await "task completion after reactivation" reactivated.settled
-    awaitCounts harness { running: 0, queued: 0 }
-    reactivatedState <- liftEffect $ Ref.read harness.state
-    reactivatedState `shouldEqual` [ 4 ]
+      activate runtime
+      dispatch runtime (Pulse pulseDone)
+    void $ await "action after reactivation" pulseDone
+    valueAfterReactivate <- liftEffect $ Ref.read state
+    valueAfterReactivate `shouldEqual` 10
+    liftEffect $ deactivate runtime
 
   it "models StrictMode setup-cleanup-setup with repeatable onActivate" do
     activation <- liftEffect EffectAVar.empty
+    pulse <- liftEffect EffectAVar.empty
     state <- liftEffect $ Ref.new 0
     runtime <- liftEffect $
-      ( createRuntime
-          { activityUpdate: \_ -> pure unit
-          , initialProps: unit
+      ( createRuntime identityAff
+          { initialProps: unit
           , initialState: 0
           , spec:
               { handlers: defaultHandlers
                   { onActivate = do
                       modify_ (_ + 1)
                       liftAff $ void $ AVar.tryPut unit activation
-                  , onAction = \(Pulse completed) -> do
+                  , onAction = \(ReplayPulse completed) -> do
                       modify_ (_ + 10)
                       liftAff $ void $ AVar.tryPut unit completed
                   }
               , onError: \_ _ -> pure unit
               }
           , stateUpdate: flip Ref.write state
-          } :: Effect (Runtime Unit Int ReplayAction Unit)
+          } :: Effect (Runtime Unit Int ReplayAction Aff)
       )
 
     Aff.finally (liftEffect $ deactivate runtime) do
@@ -88,19 +114,16 @@ spec = describe "scope and handlers" do
         deactivate runtime
         activate runtime
       void $ await "StrictMode replay activation" activation
-
-      pulse <- liftEffect EffectAVar.empty
-      liftEffect $ dispatch runtime (Pulse pulse)
+      liftEffect $ dispatch runtime (ReplayPulse pulse)
       void $ await "action after StrictMode replay" pulse
       second <- liftEffect $ Ref.read state
       second `shouldEqual` 12
 
-  it "passes previous props and exposes current props to onPropsChange" do
+  it "passes previous props and exposes current props" do
     changed <- liftEffect EffectAVar.empty
     runtime <- liftEffect $
-      ( createRuntime
-          { activityUpdate: \_ -> pure unit
-          , initialProps: 0
+      ( createRuntime identityAff
+          { initialProps: 0
           , initialState: unit
           , spec:
               { handlers: defaultHandlers
@@ -111,7 +134,7 @@ spec = describe "scope and handlers" do
               , onError: \_ _ -> pure unit
               }
           , stateUpdate: \_ -> pure unit
-          } :: Effect (Runtime Int Unit Unit Unit)
+          } :: Effect (Runtime Int Unit Unit Aff)
       )
 
     Aff.finally (liftEffect $ deactivate runtime) do
@@ -125,164 +148,163 @@ spec = describe "scope and handlers" do
     gate <- liftEffect makeGate
     state <- liftEffect $ Ref.new 0
     runtime <- liftEffect $
-      ( createRuntime
-          { activityUpdate: \_ -> pure unit
-          , initialProps: 0
+      ( createRuntime identityAff
+          { initialProps: 0
           , initialState: 0
           , spec:
               { handlers: defaultHandlers
                   { onPropsChange = \_ -> do
-                      runIntGate gate
+                      liftAff $ waitForGate gate
                       modify_ (_ + 1)
                   }
               , onError: \_ _ -> pure unit
               }
           , stateUpdate: flip Ref.write state
-          } :: Effect (Runtime Int Int Unit Unit)
+          } :: Effect (Runtime Int Int Unit Aff)
       )
 
-    Aff.finally (liftEffect $ deactivate runtime) do
-      liftEffect do
-        activate runtime
-        updateProps runtime 1
-      void $ await "props-change handler start" gate.started
-      liftEffect $ deactivate runtime
-      void $ await "props-change handler cancellation" gate.settled
-      value <- liftEffect $ Ref.read state
-      value `shouldEqual` 0
+    liftEffect do
+      activate runtime
+      updateProps runtime 1
+    void $ await "props-change handler start" gate.started
+    liftEffect $ deactivate runtime
+    void $ await "props-change handler cancellation" gate.settled
+    value <- liftEffect $ Ref.read state
+    value `shouldEqual` 0
 
-  it "cancels a structured fork when its action handler finishes" do
+  it "lets a component-owned fork outlive its launching handler" do
     child <- liftEffect makeGate
+    forkId <- liftEffect EffectAVar.empty
     handlerDone <- liftEffect EffectAVar.empty
     state <- liftEffect $ Ref.new 0
     runtime <- liftEffect $
-      ( createRuntime
-          { activityUpdate: \_ -> pure unit
-          , initialProps: unit
+      ( createRuntime identityAff
+          { initialProps: unit
           , initialState: 0
           , spec:
               { handlers: defaultHandlers
-                  { onAction = \(ForkAndReturn gate completed) -> do
-                      void $ fork do
-                        runIntGate gate
-                        modify_ (_ + 100)
-                      liftAff $ void $ AVar.take gate.started
+                  { onAction = \(LaunchChild gate fid completed) -> do
+                      childId <- fork do
+                        liftAff $ waitForGate gate
+                        modify_ (_ + 1)
+                      liftAff $ void $ AVar.tryPut childId fid
                       liftAff $ void $ AVar.tryPut unit completed
                   }
               , onError: \_ _ -> pure unit
               }
           , stateUpdate: flip Ref.write state
-          } :: Effect (Runtime Unit Int ForkAction Unit)
+          } :: Effect (Runtime Unit Int ForkAction Aff)
       )
 
     Aff.finally (liftEffect $ deactivate runtime) do
       liftEffect do
         activate runtime
-        dispatch runtime (ForkAndReturn child handlerDone)
-      void $ await "action handler return" handlerDone
-      void $ await "structured child cancellation" child.settled
-      value <- liftEffect $ Ref.read state
-      value `shouldEqual` 0
+        dispatch runtime (LaunchChild child forkId handlerDone)
+      void $ await "child start" child.started
+      void $ await "launching handler return" handlerDone
+      settledBeforeRelease <- liftEffect $ EffectAVar.tryTake child.settled
+      settledBeforeRelease `shouldEqual` Nothing
 
-  it "commit-fences a task and its structured child when replaced" do
-    firstParent <- liftEffect makeGate
-    firstChild <- liftEffect makeGate
-    replacement <- liftEffect makeGate
-    replacementDone <- liftEffect EffectAVar.empty
+      release child
+      void $ await "child completion" child.settled
+      value <- liftEffect $ Ref.read state
+      value `shouldEqual` 1
+
+  it "kill fences commits and capabilities, and waits for finalizers" do
+    child <- liftEffect makeGate
+    ignored <- liftEffect makeGate
+    forkId <- liftEffect EffectAVar.empty
+    launchDone <- liftEffect EffectAVar.empty
+    killDone <- liftEffect EffectAVar.empty
     state <- liftEffect $ Ref.new 0
-    runtime <- liftEffect $ createRuntime
-      { activityUpdate: \_ -> pure unit
-      , initialProps: unit
-      , initialState: 0
-      , spec:
-          { handlers: defaultHandlers
-              { onAction = case _ of
-                  ParentTask parent child -> Halo.perform parentTask (ParentWork parent child)
-                  ReplacementTask gate completed -> Halo.perform parentTask (ReplacementWork gate completed)
+    runtime <- liftEffect $
+      ( createRuntime identityAff
+          { initialProps: unit
+          , initialState: 0
+          , spec:
+              { handlers: defaultHandlers
+                  { onAction = case _ of
+                      LaunchCancellable gate ignoredGate fid completed -> do
+                        childId <- fork do
+                          liftAff $ Aff.catchError (waitForGate gate) (\_ -> pure unit)
+                          void $ fork $ liftAff $ waitForGate ignoredGate
+                          modify_ (_ + 1)
+                        liftAff $ void $ AVar.tryPut childId fid
+                        liftAff $ void $ AVar.tryPut unit completed
+                      KillChild fid completed -> do
+                        kill fid
+                        liftAff $ void $ AVar.tryPut unit completed
+                  }
+              , onError: \_ _ -> pure unit
               }
-          , onError: \_ _ -> pure unit
-          }
-      , stateUpdate: flip Ref.write state
-      }
+          , stateUpdate: flip Ref.write state
+          } :: Effect (Runtime Unit Int CancelAction Aff)
+      )
 
     Aff.finally (liftEffect $ deactivate runtime) do
       liftEffect do
         activate runtime
-        dispatch runtime (ParentTask firstParent firstChild)
-      void $ await "parent task start" firstParent.started
+        dispatch runtime (LaunchCancellable child ignored forkId launchDone)
+      fid <- await "cancellable fork id" forkId
+      void $ await "cancellable fork launch" launchDone
+      void $ await "cancellable fork start" child.started
 
-      liftEffect $ dispatch runtime (ReplacementTask replacement replacementDone)
-      void $ await "replaced parent task cancellation" firstParent.settled
-      void $ await "replaced structured child cancellation" firstChild.settled
-      void $ await "replacement task start" replacement.started
-      release replacement
-      void $ await "replacement task completion" replacementDone
+      liftEffect $ dispatch runtime (KillChild fid killDone)
+      void $ await "kill completion" killDone
+      finalizerRan <- liftEffect $ EffectAVar.tryTake child.settled
+      finalizerRan `shouldEqual` Just unit
+      shouldNotHaveStarted ignored
+      value <- liftEffect $ Ref.read state
+      value `shouldEqual` 0
 
+  it "uses the latest handlers for new actions" do
+    oldCompleted <- liftEffect EffectAVar.empty
+    newCompleted <- liftEffect EffectAVar.empty
+    state <- liftEffect $ Ref.new 0
+    let
+      oldHandlers = defaultHandlers
+        { onAction = \Refresh -> do
+            modify_ (_ + 1)
+            liftAff $ void $ AVar.tryPut unit oldCompleted
+        }
+      newHandlers = defaultHandlers
+        { onAction = \Refresh -> do
+            modify_ (_ + 10)
+            liftAff $ void $ AVar.tryPut unit newCompleted
+        }
+    runtime <- liftEffect $
+      ( createRuntime identityAff
+          { initialProps: unit
+          , initialState: 0
+          , spec: { handlers: oldHandlers, onError: \_ _ -> pure unit }
+          , stateUpdate: flip Ref.write state
+          } :: Effect (Runtime Unit Int RefreshAction Aff)
+      )
+
+    Aff.finally (liftEffect $ deactivate runtime) do
+      liftEffect do
+        activate runtime
+        syncSpec runtime identityAff
+          { spec: { handlers: newHandlers, onError: \_ _ -> pure unit }
+          , stateUpdate: flip Ref.write state
+          }
+        dispatch runtime Refresh
+      void $ await "new action handler" newCompleted
+      oldRan <- liftEffect $ EffectAVar.tryTake oldCompleted
+      oldRan `shouldEqual` Nothing
       value <- liftEffect $ Ref.read state
       value `shouldEqual` 10
 
-  it "uses the latest handlers after the hook spec changes" $ withHarness \harness -> do
-    gate <- liftEffect makeGate
-    liftEffect do
-      syncSpec harness.runtime
-        { activityUpdate: \next -> do
-            Ref.write next harness.activity
-            void $ EffectAVar.tryPut unit harness.activityChanged
-        , spec:
-            { handlers: defaultHandlers
-                { onAction = case _ of
-                    Direct value workGate -> do
-                      liftAff $ void $ AVar.tryPut unit workGate.launched
-                      liftAff do
-                        AVar.put unit workGate.started
-                        void $ AVar.take workGate.release
-                      modify_ (flip append [ value * 10 ])
-                      liftAff $ void $ AVar.tryPut unit workGate.settled
-                    _ -> pure unit
-                }
-            , onError: \_ _ -> pure unit
-            }
-        , stateUpdate: flip Ref.write harness.state
-        }
-      dispatch harness.runtime (Direct 2 gate)
+data ScopeAction
+  = StartScopedFork Gate (AVar ForkId) (AVar Unit)
+  | Pulse (AVar Unit)
 
-    void $ await "action using replacement handler" gate.started
-    release gate
-    void $ await "replacement handler completion" gate.settled
-    awaitCounts harness { running: 0, queued: 0 }
-    state <- liftEffect $ Ref.read harness.state
-    state `shouldEqual` [ 20 ]
+data ReplayAction = ReplayPulse (AVar Unit)
 
-data ReplayAction = Pulse (AVar Unit)
+data ForkAction = LaunchChild Gate (AVar ForkId) (AVar Unit)
 
-data ForkAction = ForkAndReturn Gate (AVar Unit)
+data CancelAction
+  = LaunchCancellable Gate Gate (AVar ForkId) (AVar Unit)
+  | KillChild ForkId (AVar Unit)
 
-data ParentAction
-  = ParentTask Gate Gate
-  | ReplacementTask Gate (AVar Unit)
-
-data ParentInput
-  = ParentWork Gate Gate
-  | ReplacementWork Gate (AVar Unit)
-
-parentTask :: Halo.Task Unit Int ParentAction Unit ParentInput
-parentTask = Halo.restartable unit case _ of
-  ParentWork parent child -> do
-    void $ fork do
-      runIntGate child
-      modify_ (_ + 100)
-    liftAff $ void $ AVar.take child.started
-    runIntGate parent
-    modify_ (_ + 1)
-  ReplacementWork gate completed -> do
-    runIntGate gate
-    modify_ (_ + 10)
-    liftAff $ void $ AVar.tryPut unit completed
-
-runIntGate :: forall props action key. Gate -> HaloM props Int action key Unit
-runIntGate gate = do
-  liftAff $ Aff.finally
-    (void $ AVar.tryPut unit gate.settled)
-    do
-      AVar.put unit gate.started
-      void $ AVar.take gate.release
+data RefreshAction = Refresh

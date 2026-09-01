@@ -6,219 +6,176 @@ Import the intentional public surface from `React.Halo`:
 import React.Halo as Halo
 ```
 
-Runtime constructors, task representation, and scheduling strategies are internal.
+Runtime constructors and ownership records are internal. `ForkId` and `SubscriptionId` constructors are hidden.
 
 ## Core computation
 
 ```purescript
-HaloM props state action key a
+HaloM props state action m a
+HaloAp props state action m a
 ```
 
-`HaloM` runs on `Aff` in a private scoped environment. It has `Functor`, `Apply`, `Applicative`, `Bind`, `Monad`, `MonadState state`, `MonadEffect`, and `MonadAff` instances.
+`HaloM` is the sequential component computation. Its parameters are current props, Halo state, dispatched actions, the application's base monad, and the result.
 
-The parameters are component props, Halo state, dispatched actions, application task keys, and the result. Task input is generic on each `Task`; it is deliberately not another `HaloM` parameter.
+It has unconditional `Functor`, `Apply`, `Applicative`, `Bind`, `Monad`, and `MonadState state` instances. It is a `MonadTrans` in its `m` parameter:
+
+```purescript
+lift :: Monad m => m a -> HaloM props state action m a
+```
+
+The following capabilities are lifted through `m`, rather than executed directly in Halo's private `Aff`:
+
+```purescript
+MonadEffect m => MonadEffect (HaloM props state action m)
+MonadAff m => MonadAff (HaloM props state action m)
+MonadAsk environment m => MonadAsk environment (HaloM props state action m)
+MonadTell output m => MonadTell output (HaloM props state action m)
+MonadThrow error m => MonadThrow error (HaloM props state action m)
+```
+
+`HaloAp` is the abstract parallel applicative counterpart:
+
+```purescript
+Parallel
+  (HaloAp props state action m)
+  (HaloM props state action m)
+```
+
+Parallel branches share their root, component scope, and `m ~> Aff` interpreter snapshot. Concurrent Halo state writes have nondeterministic ordering; combine independent results before committing state when possible.
 
 ## Handlers
 
 ```purescript
-type Handlers props state action key =
-  { onActivate :: HaloM props state action key Unit
-  , onPropsChange :: props -> HaloM props state action key Unit
-  , onAction :: action -> HaloM props state action key Unit
+type Handlers props state action m =
+  { onActivate :: HaloM props state action m Unit
+  , onPropsChange :: props -> HaloM props state action m Unit
+  , onAction :: action -> HaloM props state action m Unit
   }
 
-defaultHandlers :: forall props state action key. Handlers props state action key
+defaultHandlers
+  :: forall props state action m
+   . Handlers props state action m
 ```
 
-`defaultHandlers` ignores every callback. Handlers are active-scope-owned, concurrent, commit-fenced, and excluded from task activity.
+Handlers are component-activation-owned roots:
 
-- `onActivate` runs for every React effect activation.
-- `onPropsChange previousProps` starts when the props reference changes; use `getProps` for current props.
-- `onAction` starts for each action dispatched while active.
+- `onActivate` runs for each React effect activation and is repeatable under StrictMode.
+- `onPropsChange previousProps` starts when the props reference changes.
+- `onAction action` starts for each dispatch while active.
 
-## Task definitions
-
-```purescript
-Task props state action key input
-```
-
-`Task` is abstract. It binds a key, a strategy, and an `input -> HaloM ... Unit` implementation.
-
-```purescript
-concurrent
-  :: key
-  -> (input -> HaloM props state action key Unit)
-  -> Task props state action key input
-
-restartable
-  :: key
-  -> (input -> HaloM props state action key Unit)
-  -> Task props state action key input
-
-drop
-  :: key
-  -> (input -> HaloM props state action key Unit)
-  -> Task props state action key input
-
-enqueue
-  :: key
-  -> (input -> HaloM props state action key Unit)
-  -> Task props state action key input
-
-keepLatest
-  :: key
-  -> (input -> HaloM props state action key Unit)
-  -> Task props state action key input
-```
-
-- `concurrent`: every performance starts immediately, including same-key work.
-- `restartable`: fences/cancels running work, discards queued work, then starts the new input.
-- `drop`: discards the new input while the key is busy.
-- `enqueue`: preserves every input FIFO and runs one at a time.
-- `keepLatest`: lets running work finish and retains only the newest queued input.
-
-The first performed definition for a key fixes that key's strategy for the component runtime lifetime. Same key plus same strategy shares a slot. Same key plus a different strategy is rejected through `onError` as `TaskConfigurationError key`, including across deactivate/reactivate.
-
-## Performance and cancellation
-
-```purescript
-perform
-  :: Ord key
-  => Task props state action key input
-  -> input
-  -> HaloM props state action key Unit
-
-perform_
-  :: Ord key
-  => Task props state action key Unit
-  -> HaloM props state action key Unit
-
-cancel
-  :: Ord key
-  => Task props state action key input
-  -> HaloM props state action key Unit
-```
-
-`perform` and `perform_` submit component-scoped work and return without waiting. The submitted work outlives successful completion of its caller and is cancelled on scope deactivation.
-
-`cancel` synchronously fences running work and discards queued work for the task's key, requests cancellation, updates activity, and returns. All definitions sharing the key share this boundary.
-
-## Activity
-
-```purescript
-type TaskCounts =
-  { running :: Int
-  , queued :: Int
-  }
-
-activity
-  :: Ord key
-  => Task props state action key input
-  -> Activity key
-  -> TaskCounts
-
-totalActivity :: Activity key -> TaskCounts
-emptyActivity :: Activity key
-```
-
-`activity task snapshot` reports the task key's slot; same-key definitions report the same counts. `totalActivity` sums every slot. Activity counts only `perform`/`perform_` submissions, not handlers, structured children, or subscriptions.
+Handlers selected for new roots come from the latest hook spec. There is no asynchronous deactivation handler.
 
 ## State and props
 
+Use the `MonadState state` operations for Halo state.
+
 ```purescript
-getProps :: HaloM props state action key props
+getProps
+  :: forall props state action m
+   . HaloM props state action m props
 ```
 
-Use `MonadState` operations for state. `getProps` returns the latest component props. State mutation and capability acquisition are commit-fenced when the current owner becomes stale.
+`getProps` returns the latest props. State commits from a stale root are ignored.
 
-## Structured children
+## Component-owned forks
 
 ```purescript
 fork
-  :: HaloM props state action key Unit
-  -> HaloM props state action key ForkId
+  :: forall props state action m
+   . HaloM props state action m Unit
+  -> HaloM props state action m ForkId
 
 kill
-  :: ForkId
-  -> HaloM props state action key Unit
+  :: forall props state action m
+   . ForkId
+  -> HaloM props state action m Unit
 ```
 
-`fork` creates a concurrent child owned by the current handler or performed task. Parent completion or cancellation cancels the child. `kill` requests earlier cancellation. `ForkId` is abstract.
+`fork` starts a root owned by the current React activation. It may outlive its launching handler. The child uses the launching root's interpreter snapshot, but receives an independent state/capability fence and reports unexpected failures as `ForkError id`.
+
+`kill` removes a tracked fork, fences its Halo state and capabilities synchronously, and then waits for Aff cancellation and finalizers. Killing an unknown or completed ID does nothing. Deactivation fences and requests cancellation of every remaining fork and handler.
 
 ## Subscriptions and emitters
 
 ```purescript
 makeEmitter
-  :: ((action -> Effect Unit) -> Effect (Effect Unit))
+  :: forall action
+   . ((action -> Effect Unit) -> Effect (Effect Unit))
   -> Emitter action
 
 subscribe
-  :: Ord key
-  => Emitter action
-  -> HaloM props state action key SubscriptionId
+  :: forall props state action m
+   . Emitter action
+  -> HaloM props state action m SubscriptionId
 
 subscribeWithId
-  :: Ord key
-  => (SubscriptionId -> Emitter action)
-  -> HaloM props state action key SubscriptionId
+  :: forall props state action m
+   . (SubscriptionId -> Emitter action)
+  -> HaloM props state action m SubscriptionId
 
 unsubscribe
-  :: SubscriptionId
-  -> HaloM props state action key Unit
+  :: forall props state action m
+   . SubscriptionId
+  -> HaloM props state action m Unit
 ```
 
-Emitter registration receives a receiver and returns cleanup. Emissions dispatch actions into the registering activation scope; stale callbacks cannot target a later scope. Manual unsubscribe removes tracking before cleanup. Deactivation attempts all remaining cleanup, and reports thrown cleanup as `DeactivationError` without preventing other cleanup and cancellation.
+Emitter registration receives a receiver and returns its cleanup effect. Emissions dispatch into the activation that registered the receiver. A stale callback cannot target a later activation.
+
+Manual unsubscription removes tracking before cleanup runs. Deactivation attempts every remaining cleanup; throwing cleanup is isolated and reported as `DeactivationError` without preventing other cleanup and cancellation requests.
 
 ## Errors
 
 ```purescript
-data ErrorContext props action key
+data ErrorContext props action
   = ActivationError
   | PropsChangeError props
   | ActionError action
-  | TaskError key
-  | TaskConfigurationError key
+  | ForkError ForkId
   | DeactivationError
 
-onError :: ErrorContext props action key -> Error -> Effect Unit
+onError
+  :: ErrorContext props action
+  -> Error
+  -> Effect Unit
 ```
 
-Unexpected handler and task failures reach `onError`. `TaskError` identifies the task key. `TaskConfigurationError` identifies a same-key strategy conflict. `DeactivationError` reports throwing subscription cleanup. Halo suppresses cancellation errors it initiated.
+Halo reports unexpected root failures through the latest `onError` callback. Cancellation initiated by Halo is suppressed. Expected domain failures should be represented in application values, actions, or state.
 
 ## Hook API
 
 ```purescript
-type HookSpec props state action key =
-  { handlers :: Handlers props state action key
+type HookSpec props state action m =
+  { handlers :: Handlers props state action m
   , initialState :: state
-  , onError :: ErrorContext props action key -> Error -> Effect Unit
+  , onError :: ErrorContext props action -> Error -> Effect Unit
   , props :: props
   }
 
-type HaloResult state action key =
-  { activity :: Activity key
-  , dispatch :: action -> Effect Unit
+type HaloResult state action =
+  { dispatch :: action -> Effect Unit
   , state :: state
   }
 
 useHalo
-  :: Ord key
-  => HookSpec props state action key
-  -> Hook (UseHalo props state action key) (HaloResult state action key)
+  :: forall props state action m
+   . (m ~> Aff)
+  -> HookSpec props state action m
+  -> Hook
+       (UseHalo props state action m)
+       (HaloResult state action)
 ```
 
-The hook synchronizes the latest handlers and React callbacks. Cleanup deactivates its scope; StrictMode reactivation creates a fresh scope while retaining the runtime's key-strategy validation.
+The natural transformation is captured for each new handler or fork root. Updating the hook with another interpreter affects later roots only. Cleanup deactivates the current scope; StrictMode reactivation creates a fresh usable scope.
 
 ## Component API
 
 ```purescript
-type ComponentSpec props state action key =
-  { handlers :: Handlers props state action key
+type ComponentSpec props state action m =
+  { handlers :: Handlers props state action m
   , initialState :: props -> state
-  , onError :: ErrorContext props action key -> Error -> Effect Unit
+  , onError :: ErrorContext props action -> Error -> Effect Unit
   , render ::
-      { activity :: Activity key
-      , dispatch :: action -> Effect Unit
+      { dispatch :: action -> Effect Unit
       , props :: props
       , state :: state
       }
@@ -226,10 +183,11 @@ type ComponentSpec props state action key =
   }
 
 component
-  :: Ord key
-  => String
-  -> ComponentSpec props state action key
+  :: forall props state action m
+   . String
+  -> (m ~> Aff)
+  -> ComponentSpec props state action m
   -> Component props
 ```
 
-Use `component` when Halo owns the whole component. `initialState` receives the initial props once per mount; later prop changes call `handlers.onPropsChange` and do not reinitialize state. Use `useHalo` when other React hooks share the render function.
+`initialState` receives initial props once per mount. Later prop changes invoke `handlers.onPropsChange` and do not reinitialize state. Use `component` when Halo owns the whole component and `useHalo` when other hooks share the render function.

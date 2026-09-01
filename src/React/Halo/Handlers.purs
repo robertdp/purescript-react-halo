@@ -11,13 +11,13 @@ import React.Halo.Internal.Runtime (Handlers) as Runtime
 -- |
 -- | `onActivate` may run again after React replays an effect setup. It is not an
 -- | exactly-once mount callback. `onPropsChange` receives the previous props;
--- | use `React.Halo.getProps` to read the current props. `onAction` starts
--- | immediately for every dispatched action.
-type Handlers props state action key = Runtime.Handlers props state action key
+-- | use `React.Halo.getProps` to read the current props. `onAction` starts for
+-- | every dispatched action.
+type Handlers props state action m = Runtime.Handlers props state action m
 
 -- | Handlers that do nothing. Use a record update to configure only the
 -- | callbacks a component needs.
-defaultHandlers :: forall props state action key. Handlers props state action key
+defaultHandlers :: forall props state action m. Handlers props state action m
 defaultHandlers =
   { onActivate: pure unit
   , onPropsChange: \_ -> pure unit

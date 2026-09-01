@@ -10,72 +10,64 @@ import Prelude
 import Data.Newtype (class Newtype)
 import Data.Tuple.Nested ((/\))
 import Effect (Effect)
-import Effect.Aff (Error)
+import Effect.Aff (Aff, Error)
 import Effect.Unsafe (unsafePerformEffect)
 import React.Basic.Hooks (Hook, UseEffect, UseMemo, UseState)
 import React.Basic.Hooks as React
 import React.Halo.Handlers (Handlers)
 import React.Halo.Internal.Runtime (Runtime, activate, createRuntime, deactivate, dispatch, syncSpec, updateProps)
-import React.Halo.Internal.Types (Activity, ErrorContext, emptyActivity)
+import React.Halo.Internal.Types (ErrorContext)
 
 -- | Configuration for `useHalo`.
--- |
--- | The application chooses `key`; only explicit tasks use it, and it needs an
--- | `Ord` instance so Halo can coordinate keyed task slots.
-type HookSpec props state action key =
-  { handlers :: Handlers props state action key
+type HookSpec props state action m =
+  { handlers :: Handlers props state action m
   , initialState :: state
-  , onError :: ErrorContext props action key -> Error -> Effect Unit
+  , onError :: ErrorContext props action -> Error -> Effect Unit
   , props :: props
   }
 
--- | State, action dispatch, and explicit task activity exposed to rendering code.
-type HaloResult state action key =
-  { activity :: Activity key
-  , dispatch :: action -> Effect Unit
+-- | State and action dispatch exposed to rendering code.
+type HaloResult state action =
+  { dispatch :: action -> Effect Unit
   , state :: state
   }
 
-newtype UseHalo props state action key hooks = UseHalo
+newtype UseHalo props state action m hooks = UseHalo
   ( UseEffect Unit
       ( UseEffect Unit
           ( UseEffect Unit
-              ( UseMemo Unit (Runtime props state action key)
-                  ( UseState (Activity key)
-                      (UseState state hooks)
-                  )
+              ( UseMemo Unit (Runtime props state action m)
+                  (UseState state hooks)
               )
           )
       )
   )
 
-derive instance newtypeUseHalo :: Newtype (UseHalo props state action key hooks) _
+derive instance newtypeUseHalo :: Newtype (UseHalo props state action m hooks) _
 
 -- | Run Halo inside a `react-basic-hooks` component.
 -- |
--- | React effect activation owns the runtime scope. Cleanup deactivates it, and
--- | a later StrictMode replay creates a fresh usable scope.
+-- | The natural transformation interprets application effects in `m` into the
+-- | `Aff` fibers owned by the active React scope. New roots use the latest
+-- | interpreter; roots already running retain their starting snapshot.
 useHalo
-  :: forall props state action key
-   . Ord key
-  => HookSpec props state action key
-  -> Hook (UseHalo props state action key) (HaloResult state action key)
-useHalo { props, initialState, handlers, onError } =
+  :: forall props state action m
+   . (m ~> Aff)
+  -> HookSpec props state action m
+  -> Hook (UseHalo props state action m) (HaloResult state action)
+useHalo runInAff { props, initialState, handlers, onError } =
   React.coerceHook React.do
     state /\ setState <- React.useState' initialState
-    activity /\ setActivity <- React.useState' emptyActivity
     runtime <- React.useMemo unit \_ -> unsafePerformEffect $
-      createRuntime
-        { activityUpdate: setActivity
-        , initialProps: props
+      createRuntime runInAff
+        { initialProps: props
         , initialState
         , spec: { handlers, onError }
         , stateUpdate: setState
         }
     React.useEffectAlways do
-      syncSpec runtime
-        { activityUpdate: setActivity
-        , spec: { handlers, onError }
+      syncSpec runtime runInAff
+        { spec: { handlers, onError }
         , stateUpdate: setState
         }
       pure mempty
@@ -86,7 +78,6 @@ useHalo { props, initialState, handlers, onError } =
       updateProps runtime props
       pure mempty
     pure
-      { activity
-      , dispatch: dispatch runtime
+      { dispatch: dispatch runtime
       , state
       }
