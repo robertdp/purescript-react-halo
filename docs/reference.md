@@ -167,7 +167,7 @@ useHalo
        (HaloResult state action)
 ```
 
-The natural transformation is captured for each new handler or fork root. Updating the hook with another interpreter affects later roots only. Cleanup deactivates the current scope; StrictMode reactivation creates a fresh usable scope.
+Each new handler captures the latest natural transformation supplied to the hook. A fork inherits the transformation captured by the root that launches it, even if a newer render supplied another interpreter before the fork starts. Cleanup deactivates the current scope; StrictMode reactivation creates a fresh usable scope.
 
 ## Component API
 
