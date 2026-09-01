@@ -12,8 +12,8 @@ package:
     - avar
     - effect
     - either
+    - exceptions
     - foldable-traversable
-    - halogen-subscriptions
     - maybe
     - newtype
     - ordered-collections

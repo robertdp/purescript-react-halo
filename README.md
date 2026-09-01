@@ -6,13 +6,27 @@ Use Halo when a component has event-driven workflows that are awkward to express
 
 ## Install
 
-Halo v4 targets PureScript 0.15.16, Spago 1.0.4, and the Registry package set 80.8.0 used by this repository.
+Halo v4 targets PureScript 0.15.16 and Spago 1.0.4. It is not published yet: the Registry still resolves `react-halo` to v3. To try v4 from a sibling checkout, add Halo as a local package and include `react-basic-dom` for the quick-start renderer:
 
-```console
-spago install react-halo
+```yaml
+package:
+  dependencies:
+    - react-basic-dom
+    - react-halo
+
+workspace:
+  extraPackages:
+    react-halo:
+      path: ../purescript-react-halo
 ```
 
-Your application also needs the JavaScript packages required by `react-basic-hooks`, including React. Halo does not publish an npm runtime entry point.
+After v4 is published, install both packages with:
+
+```console
+spago install react-halo react-basic-dom
+```
+
+Halo itself does not require `react-basic-dom`; only the example renderer does. Your application also needs the JavaScript packages required by `react-basic-hooks`, including React. Halo does not publish an npm runtime entry point.
 
 ## Quick start: a restartable request
 
@@ -177,9 +191,13 @@ Cancellation cannot undo an HTTP request already sent, a log already written, or
 
 ## Subscriptions
 
-Halo uses `Emitter` from `halogen-subscriptions`:
+Halo has a small emitter type rather than depending on Halogen. Registration receives an action callback and must return that receiver's cleanup effect:
 
 ```purescript
+eventEmitter = Halo.makeEmitter \emit -> do
+  listener <- source.listen emit
+  pure (source.remove listener)
+
 Halo.Action StartListening -> do
   subscriptionId <- Halo.subscribe eventEmitter
   modify_ _ { subscriptionId = Just subscriptionId }
@@ -190,7 +208,7 @@ Halo.Action StopListening -> do
   modify_ _ { subscriptionId = Nothing }
 ```
 
-Manual `unsubscribe` removes the subscription from Halo's tracking. Any subscription still tracked at deactivation is unsubscribed automatically. New subscriptions from stale or inactive evaluations are rejected, and callbacks retained by a misbehaving source remain bound to their original scope rather than targeting a later reactivation.
+Manual `unsubscribe` removes the cleanup from Halo's tracking before running it. Any cleanup still tracked at deactivation is run automatically. One cleanup failure is reported through `onError` only after Halo has attempted every subscription cleanup and requested cancellation of all other scope-owned work. New subscriptions from stale or inactive evaluations are rejected, and callbacks retained by a misbehaving source remain bound to their original scope rather than targeting a later reactivation.
 
 An `Emitter` is broadcast-style: every subscriber receives every emitted value. It is not a consuming work queue and provides no backpressure. Each event delivered to Halo is dispatched once and then follows its action policy. Halo v4 intentionally does not expose a coroutine, process, or saga API; task scheduling is the focused concurrency boundary.
 
@@ -202,7 +220,7 @@ Every spec must provide:
 onError :: Halo.ErrorContext props action -> Error -> Effect Unit
 ```
 
-The context is `ActivationError`, `UpdateError previousProps`, or `ActionError action`. Expected domain failures belong in the action/state model, usually by catching `Aff` errors inside `eval`. Unexpected uncaught errors go to `onError`. Cancellation caused by replacement or deactivation is suppressed rather than reported as an application failure.
+The context is `ActivationError`, `DeactivationError`, `UpdateError previousProps`, or `ActionError action`. `DeactivationError` reports a subscription cleanup that threw; Halo continues cleaning the rest of the scope before calling `onError`. Expected domain failures belong in the action/state model, usually by catching `Aff` errors inside `eval`. Unexpected uncaught errors go to `onError`. Cancellation caused by replacement or deactivation is suppressed rather than reported as an application failure.
 
 ## Component helper or hook
 
@@ -251,13 +269,14 @@ Version 4 intentionally breaks the evaluator API to make cancellation and owners
 
 - Change `HaloM props state action m` to `HaloM props state action key`. Halo now runs directly on `Aff`; remove `hoist`, `HaloAp`, and the custom base monad parameter.
 - Add an application task-key type with `Eq` and `Ord`, then add `schedule :: action -> TaskPolicy key`.
-- Add `onError :: ErrorContext props action -> Error -> Effect Unit`.
+- Add `onError :: ErrorContext props action -> Error -> Effect Unit`, including the new `DeactivationError` context for subscription cleanup failures.
 - Replace `Initialize` with `Activate`. `Activate` is repeatable.
 - Remove `Finalize` handlers. Use scoped cancellation, subscriptions, and `Aff` finalizers instead.
 - Keep `Update previousProps`, and read current props with `Halo.props`.
 - Replace the `useHalo` tuple with the record fields `state`, `dispatch`, and `activity`.
 - In `component` renderers, rename `send` to `dispatch` and accept `activity` when needed.
 - Revisit `fork`: v4 children are structured under the evaluation that created them, not detached until component unmount.
+- Replace `Halogen.Subscription.Emitter` values with `Halo.makeEmitter`; the registration function has the same callback-and-cleanup shape but no Halogen dependency.
 - Remove assumptions that action effects run without coordination. Choose `Every` explicitly for v3-like concurrent dispatch.
 
 ## Development

@@ -10,8 +10,8 @@
             "avar",
             "effect",
             "either",
+            "exceptions",
             "foldable-traversable",
-            "halogen-subscriptions",
             "maybe",
             "newtype",
             "ordered-collections",
@@ -1117,23 +1117,6 @@
         "tailrec",
         "tuples",
         "unfoldable"
-      ]
-    },
-    "halogen-subscriptions": {
-      "type": "registry",
-      "version": "2.0.0",
-      "integrity": "sha256-1eBtVZENgGtKuOY9H0iuYD3dO1CSqmOIyhYe4OhypOU=",
-      "dependencies": [
-        "arrays",
-        "contravariant",
-        "control",
-        "effect",
-        "foldable-traversable",
-        "maybe",
-        "prelude",
-        "refs",
-        "safe-coerce",
-        "unsafe-reference"
       ]
     },
     "identity": {

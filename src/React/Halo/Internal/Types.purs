@@ -39,6 +39,7 @@ data TaskPolicy key
 -- | The evaluation whose unexpected `Aff` failure reached the error handler.
 data ErrorContext props action
   = ActivationError
+  | DeactivationError
   | UpdateError props
   | ActionError action
 

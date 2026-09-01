@@ -65,6 +65,7 @@ loadButton = Halo.component "LoadButton"
 showContext :: Halo.ErrorContext Props Action -> String
 showContext = case _ of
   Halo.ActivationError -> "activation"
+  Halo.DeactivationError -> "deactivation"
   Halo.UpdateError _ -> "props update"
   Halo.ActionError Load -> "Load"
 
@@ -93,6 +94,9 @@ workflowSchedule = case _ of
   RecordMetric _ -> Halo.Every
 
 data SimpleAction = InitializeData
+
+simpleEmitter :: Halo.Emitter SimpleAction
+simpleEmitter = Halo.makeEmitter \_ -> pure (pure unit)
 
 simpleEval :: Halo.Lifecycle Unit SimpleAction -> Halo.HaloM Unit Unit SimpleAction Unit Unit
 simpleEval = Halo.mkEval $ Halo.defaultEval

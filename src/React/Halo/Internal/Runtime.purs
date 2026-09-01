@@ -36,11 +36,12 @@ import Effect.Aff.AVar as AVar
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.AVar as EffectAVar
 import Effect.Class (class MonadEffect, liftEffect)
+import Effect.Exception as Exception
 import Effect.Ref (Ref)
 import Effect.Ref as Ref
-import Halogen.Subscription (Emitter, Subscription)
-import Halogen.Subscription as HS
 import React.Halo.Internal.Types (Activity(..), ErrorContext(..), ForkId(..), Lifecycle(..), SubscriptionId(..), TaskPolicy(..), emptyActivity)
+import React.Halo.Subscription (Emitter)
+import React.Halo.Subscription as Subscription
 import Unsafe.Reference (unsafeRefEq)
 
 -- | The direct Halo evaluator. Its environment is intentionally private so a
@@ -78,7 +79,7 @@ newtype Scope props state action key = Scope
   , every :: Ref (Map Int (Root props state action key))
   , generation :: Int
   , roots :: Ref (Map Int (Root props state action key))
-  , subscriptions :: Ref (Map SubscriptionId Subscription)
+  , subscriptions :: Ref (Map SubscriptionId (Effect Unit))
   , tasks :: Ref (Map key (TaskSlot props state action key))
   }
 
@@ -205,10 +206,21 @@ deactivate runtime@(Runtime state) = do
       subscriptions <- takeRef current.subscriptions Map.empty
 
       publishActivity runtime emptyActivity
-      traverse_ HS.unsubscribe (Map.values subscriptions)
+      cleanupResults <- traverse Exception.try (Map.values subscriptions)
       traverse_ cancelRoot (Map.values roots)
       traverse_ cancelRoot (Map.values every)
       traverse_ (traverse_ cancelRoot <<< Map.values <<< _.running) (Map.values tasks)
+
+      -- A faulty external cleanup must not prevent the rest of the scope from
+      -- being cancelled. Report teardown failures only after every owned
+      -- resource has received its cleanup request.
+      spec <- Ref.read state.spec
+      traverse_
+        ( case _ of
+            Left error -> spec.onError DeactivationError error
+            Right _ -> pure unit
+        )
+        cleanupResults
 
 updateProps
   :: forall props state action key
@@ -276,8 +288,8 @@ subscribe' makeEmitter = HaloM do
     current <- isCurrent execution
     when current do
       let Scope scope = execution.scope
-      subscription <- HS.subscribe (makeEmitter sid) (dispatchToScope execution.runtime execution.scope)
-      Ref.modify_ (Map.insert sid subscription) scope.subscriptions
+      cleanup <- Subscription.runEmitter (makeEmitter sid) (dispatchToScope execution.runtime execution.scope)
+      Ref.modify_ (Map.insert sid cleanup) scope.subscriptions
     pure sid
 
 unsubscribe
@@ -297,7 +309,7 @@ unsubscribe sid = HaloM do
             }
         )
         scope.subscriptions
-      traverse_ HS.unsubscribe subscription
+      traverse_ identity subscription
 
 fork
   :: forall props state action key

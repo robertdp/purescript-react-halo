@@ -150,5 +150,6 @@ awaitCounts harness expected = go 20
 contextName :: ErrorContext Unit Action -> String
 contextName = case _ of
   ActivationError -> "activation"
+  DeactivationError -> "deactivation"
   UpdateError _ -> "update"
   ActionError _ -> "action"
