@@ -16,7 +16,7 @@ The interpreter must return the owned `Aff` computation. An interpreter that det
 
 ## React delegates ownership to the runtime
 
-[`React.Halo.Component`](../src/React/Halo/Component.purs) computes initial state from the initial props and delegates to `useHalo`. The renderer receives current props, Halo state, and an action dispatcher.
+[`React.Halo.Component`](../src/React/Halo/Component.purs) computes initial state from the initial props and delegates to `useHalo`. The renderer receives current props, Halo state, its coherent immutable task view, and an action dispatcher.
 
 [`React.Halo.Hook`](../src/React/Halo/Hook.purs) creates one internal runtime for the hook instance and connects it to React effects:
 
@@ -24,11 +24,11 @@ The interpreter must return the owned `Aff` computation. An interpreter that det
 2. activate the runtime and return synchronous deactivation as effect cleanup; and
 3. publish prop changes to the runtime.
 
-The hook returns only current state and `dispatch`. [`React.Halo.Internal.Runtime`](../src/React/Halo/Internal/Runtime.purs) owns fibers, activation scopes, subscriptions, state fencing, and error routing.
+The hook returns current `state`, an immutable task-authority `tasks` view, and `dispatch`. State and task view are published through one React setter as a coherent snapshot. [`React.Halo.Internal.Runtime`](../src/React/Halo/Internal/Runtime.purs) owns fibers, activation scopes, task authority, subscriptions, state fencing, and error routing.
 
 ## Each activation has a generation
 
-An active runtime holds one scope with a unique generation, an active flag, and maps for handler roots, component forks, generic cleanup, and subscriptions. Activation is idempotent while that scope is current.
+An active runtime holds one scope with a unique generation, an active flag, and maps for handler roots, component forks, task authority, generic cleanup, and subscriptions. Activation is idempotent while that scope is current. Heterogeneous task-slot bindings persist separately for the runtime lifetime; active authority does not.
 
 Deactivation marks the scope inactive and clears it from the runtime before foreign cleanup or Aff cancellation begins. A later activation creates fresh maps and a new generation. Currency checks require both an active matching generation and a live root owner, so work retained from an earlier generation cannot affect a reactivated component.
 
@@ -42,9 +42,15 @@ Every `onActivate`, `onPropsChange`, and `onAction` invocation starts an indepen
 
 Root completion removes only that root's current map entry. IDs are fresh within the runtime, so stale completion cannot remove newer work.
 
-Managed task policies use the same fork map and root ownership rather than a scheduler or key registry. In one synchronous transaction the runtime claims lensed task state, fences a superseded root, prepares and records the replacement behind a gate, publishes `Active`, requests old cancellation, and opens the new gate. The task body inherits the launching root's interpreter. Hidden run identity makes delayed timers and completions conditional on the authoritative run.
+Managed task policies use the same fork map and root ownership rather than a separate coordination subsystem. A `Task.Slot` combines a type-level brand with a canonical lens. First use registers an erased binding that can inspect and normalize that focus without retaining a body, input, or fork handle. Temporary semantic probes verify that one brand maps to one focus and one focus to one brand; probes are never published. A collision throws in the calling root's existing error context before state mutation or cancellation.
 
-`Task.State` projects only `Idle`, `Active`, `Failed`, or `Succeeded`. Debounce timing remains private: an owned Aff timer precedes the body in the same managed root. A typed `Either` completion updates the lensed state atomically. An unexpected current failure clears the matching run to `Idle` before existing `ForkError` routing.
+Activation authority maps a registered slot brand to an exact token containing runtime identity, activation generation, and `ForkId`. In one synchronous transaction the runtime reconciles registered slots, claims authority, fences a superseded root, prepares and records the replacement behind a gate, publishes state and view, requests old cancellation, and opens the new gate. The task body inherits the launching root's interpreter.
+
+`Task.State` is freely copyable and does not itself prove ownership. `Task.View` is an immutable pair of the published state snapshot and authority map. Slot-aware projection reports `Active` only when the canonical focus and authority contain the exact token; copied, stale, cross-slot, and cross-runtime active values report `Idle`.
+
+Every generic `MonadState` write reconciles registered bindings before publication. Preserving the exact token is ordinary. Replacing it with correctly branded idle or terminal state removes/fences authority while preserving the requested value. Foreign or stale active state is normalized to branded idle and can never supply a fork to cancel. Typed completion and unexpected failure use exact canonical-focus and authority checks.
+
+Debounce timing remains private: an owned Aff timer precedes the body in the same managed root, and both phases project `Active`. A typed `Either` completion removes authority and stores `Failed` or `Succeeded` atomically. An unexpected current failure clears the exact run to `Idle` before existing `ForkError` routing.
 
 ## Fences precede cancellation
 
@@ -52,7 +58,7 @@ Cancellation is cooperative, but ownership loss is synchronous.
 
 For explicit `kill`, the runtime removes the fork from tracking, fences its owner, requests Aff cancellation, and waits for the fiber and its Aff finalizers before returning. An unknown or completed `ForkId` is a no-op.
 
-React deactivation cannot wait asynchronously. It invalidates the scope; takes all tracked roots, generic cleanup, and subscriptions; and fences every root. Managed active task state is then normalized to `Idle` in the runtime state without calling React's setter during cleanup. Every synchronous cleanup is attempted before cancellation is requested for handler, fork, and task fibers. Cleanup failures are reported only after the runtime has attempted the rest of the cleanup work.
+React deactivation cannot wait asynchronously. It invalidates the scope; takes all tracked roots, generic cleanup, and subscriptions; and fences every root. Activation authority is cleared and persistent bindings normalize active task state to `Idle` in the runtime state without calling React's setter during cleanup. Every synchronous cleanup is attempted before cancellation is requested for handler, fork, and task fibers. Cleanup failures are reported only after the runtime has attempted the rest of the cleanup work.
 
 If deactivation normalized task state, the next activation publishes that runtime state through the latest React setter before starting `onActivate`. Terminal task outcomes have no active root and persist. This ordering keeps StrictMode replay state coherent without adding an asynchronous deactivation callback.
 
@@ -61,7 +67,7 @@ The fences protect two important boundaries:
 - `MonadState` may still compute a stale operation's return value, but it cannot update stored state or call React's state setter.
 - A later `lift` from a stale root fails with Halo's internal cancellation error before invoking `m ~> Aff`. Catching the initial Aff cancellation therefore cannot start a newly lifted application effect.
 
-Capabilities that create or remove forks and subscriptions also check currency. Cancellation cannot undo an external effect that already happened inside an application computation; application writes must still use appropriate idempotency or retry semantics.
+Capabilities that create or remove forks, task roots, cleanup, and subscriptions also check currency. Cancellation cannot undo an external effect that already happened inside an application computation; application writes must still use appropriate idempotency or retry semantics.
 
 ## Synchronous cleanup stays activation-scoped
 
@@ -83,7 +89,7 @@ Concurrent Halo state writes have nondeterministic ordering and can overwrite on
 
 ## Errors use the current reporting callback
 
-Each root carries the context assigned at launch: `ActivationError`, `PropsChangeError previousProps`, `ActionError action`, or `ForkError id`. Managed task bodies use `ForkError` because they are component-owned roots without public task keys. An unexpected failure is reported only while that root and scope are still current. The runtime reads the latest `onError` callback at reporting time, so a render can update reporting without changing an already-running root's interpreter.
+Each root carries the context assigned at launch: `ActivationError`, `PropsChangeError previousProps`, `ActionError action`, or `ForkError id`. Managed task bodies use `ForkError` because they are component-owned roots without separate public run identity. An unexpected failure is reported only while that root and scope are still current. The runtime reads the latest `onError` callback at reporting time, so a render can update reporting without changing an already-running root's interpreter.
 
 Subscription cleanup failures use `DeactivationError`. Halo-initiated cancellation and stale-lift failures are suppressed because the owner has already been fenced.
 
@@ -94,7 +100,7 @@ The deterministic runtime tests exercise ownership without mounting a real DOM f
 - [`RuntimeSpec`](../test/Test/Halo/RuntimeSpec.purs) covers AppM interpretation, handler and fork interpreter snapshots, the stale-lift fence, and direct parallel execution.
 - [`ScopeHandlerSpec`](../test/Test/Halo/ScopeHandlerSpec.purs) covers activation generations, StrictMode reactivation, props, handler and fork ownership, explicit kill, finalizer waiting, and stale capability/state rejection.
 - [`SubscriptionErrorSpec`](../test/Test/Halo/SubscriptionErrorSpec.purs) covers generic and subscription cleanup isolation, manual release, stale activation IDs and emitter callbacks, error contexts, and latest error-handler selection.
-- [`TaskSpec`](../test/Test/Halo/TaskSpec.purs) covers task optics and policies, atomic claims, supersession and reset, private debounce scheduling, stale effect fences, deactivation normalization, current setters, and inherited interpreters.
+- [`TaskSpec`](../test/Test/Halo/TaskSpec.purs) covers branded slots, view projection, collision detection, state-copy and stale-snapshot reconciliation, cross-runtime authority, policies, atomic claims, supersession and reset, private debounce scheduling, stale effect fences, two-slot deactivation normalization, current setters, and inherited interpreters.
 - [`DocExamples`](../test/Test/Halo/DocExamples.purs) compile-checks the complete component, hook, AppM, and task example.
 - [`GuideExamples`](../test/Test/Halo/GuideExamples.purs) compile-checks the guide's task, parallel, subscription, and cleanup examples.
 

@@ -3,12 +3,13 @@ module Test.Halo.TaskSpec (spec) where
 import Prelude
 
 import Control.Monad.Reader (ReaderT, ask, runReaderT)
-import Control.Monad.State (modify_)
+import Control.Monad.State (get, modify_, put)
 import Control.Monad.Trans.Class (lift)
 import Data.Either (Either(..))
 import Data.Lens (Lens', preview, review)
 import Data.Lens.Record (prop)
 import Data.Maybe (Maybe(..))
+import Data.Tuple (Tuple(..))
 import Effect (Effect)
 import Effect.Aff (Aff, Milliseconds(..))
 import Effect.Aff as Aff
@@ -22,6 +23,7 @@ import Effect.Ref as Ref
 import React.Halo.Handlers (Handlers, defaultHandlers)
 import React.Halo.Internal.Runtime (HaloM, Runtime, activate, createRuntime, deactivate, dispatch, syncSpec)
 import React.Halo.Internal.Task as TaskInternal
+import React.Halo.Internal.Task.Types as TaskTypes
 import React.Halo.Internal.Types (ErrorContext(..))
 import React.Halo.Task as Task
 import Test.Halo.Helpers (Gate, await, makeGate, release, shouldNotHaveStarted, waitForGate)
@@ -31,11 +33,27 @@ import Type.Proxy (Proxy(..))
 
 type ComponentState =
   { elsewhere :: Int
+  , other :: Task.State String Int
   , task :: Task.State String Int
   }
 
 taskLens :: Lens' ComponentState (Task.State String Int)
 taskLens = prop (Proxy :: Proxy "task")
+
+taskSlot :: Task.Slot "task" ComponentState String Int
+taskSlot = Task.slot (Proxy :: Proxy "task") taskLens
+
+otherLens :: Lens' ComponentState (Task.State String Int)
+otherLens = prop (Proxy :: Proxy "other")
+
+otherSlot :: Task.Slot "other" ComponentState String Int
+otherSlot = Task.slot (Proxy :: Proxy "other") otherLens
+
+sameBrandOtherSlot :: Task.Slot "task" ComponentState String Int
+sameBrandOtherSlot = Task.slot (Proxy :: Proxy "task") otherLens
+
+differentBrandTaskSlot :: Task.Slot "alias" ComponentState String Int
+differentBrandTaskSlot = Task.slot (Proxy :: Proxy "alias") taskLens
 
 data Body
   = WaitBody Gate (Either String Int)
@@ -54,7 +72,15 @@ data Action
   | RunStartTwice Body Body (AVar Unit)
   | RunSupersede Body (AVar Unit)
   | RunDebounce Timer Milliseconds Body (AVar Unit)
+  | RunOther Body (AVar Unit)
   | Reset (AVar Unit)
+  | ResetOther (AVar Unit)
+  | AssignIdleAndStart Body (AVar Unit)
+  | CopyTaskToOther (AVar Unit)
+  | CaptureState (AVar ComponentState)
+  | RestoreState ComponentState (AVar Unit)
+  | RunSameBrandCollision Body
+  | RunDifferentBrandCollision Body
 
 type UI a = HaloM Unit ComponentState Action Aff a
 
@@ -62,24 +88,43 @@ handlers :: Handlers Unit ComponentState Action Aff
 handlers = defaultHandlers
   { onAction = case _ of
       RunOnce body launched -> do
-        Task.once taskLens (runBody body)
+        Task.once taskSlot (runBody body)
         signal launched
       RunStartIfInactive body launched -> do
-        Task.startIfInactive taskLens (runBody body)
+        Task.startIfInactive taskSlot (runBody body)
         signal launched
       RunStartTwice first second launched -> do
-        Task.startIfInactive taskLens (runBody first)
-        Task.startIfInactive taskLens (runBody second)
+        Task.startIfInactive taskSlot (runBody first)
+        Task.startIfInactive taskSlot (runBody second)
         signal launched
       RunSupersede body launched -> do
-        Task.supersede taskLens (runBody body)
+        Task.supersede taskSlot (runBody body)
         signal launched
       RunDebounce timer duration body launched -> do
-        TaskInternal.debounceWith (runTimer timer) taskLens duration (runBody body)
+        TaskInternal.debounceWith (runTimer timer) taskSlot duration (runBody body)
+        signal launched
+      RunOther body launched -> do
+        Task.supersede otherSlot (runBody body)
         signal launched
       Reset completed -> do
-        Task.reset taskLens
+        Task.reset taskSlot
         signal completed
+      ResetOther completed -> do
+        Task.reset otherSlot
+        signal completed
+      AssignIdleAndStart body launched -> do
+        modify_ _ { task = Task.idle taskSlot }
+        Task.startIfInactive taskSlot (runBody body)
+        signal launched
+      CopyTaskToOther completed -> do
+        modify_ \state -> state { other = state.task }
+        signal completed
+      CaptureState captured -> get >>= liftAff <<< void <<< flip AVar.tryPut captured
+      RestoreState snapshot completed -> do
+        put snapshot
+        signal completed
+      RunSameBrandCollision body -> Task.supersede sameBrandOtherSlot (runBody body)
+      RunDifferentBrandCollision body -> Task.supersede differentBrandTaskSlot (runBody body)
   }
 
 runBody :: Body -> UI (Either String Int)
@@ -111,9 +156,11 @@ signal :: AVar Unit -> UI Unit
 signal completed = liftAff $ void $ AVar.tryPut unit completed
 
 type Harness =
-  { runtime :: Runtime Unit ComponentState Action Aff
+  { otherUpdates :: AVar (Task.Status String Int)
+  , runtime :: Runtime Unit ComponentState Action Aff
   , setterCalls :: Ref.Ref Int
   , state :: Ref.Ref ComponentState
+  , tasks :: Ref.Ref (Task.View ComponentState)
   , updates :: AVar (Task.Status String Int)
   }
 
@@ -122,35 +169,49 @@ makeHarness
   -> Aff Harness
 makeHarness onError = liftEffect do
   state <- Ref.new initialState
+  tasks <- Ref.new (TaskTypes.emptyView initialState)
   updates <- EffectAVar.empty
+  otherUpdates <- EffectAVar.empty
   setterCalls <- Ref.new 0
   runtime <- createRuntime identity
     { initialProps: unit
     , initialState
     , spec: { handlers, onError }
-    , stateUpdate: updateState state updates setterCalls
+    , stateUpdate: updateState state tasks updates otherUpdates setterCalls
     }
   activate runtime
-  pure { runtime, setterCalls, state, updates }
+  pure { otherUpdates, runtime, setterCalls, state, tasks, updates }
 
 initialState :: ComponentState
-initialState = { elsewhere: 0, task: Task.idle }
+initialState =
+  { elsewhere: 0
+  , other: Task.idle otherSlot
+  , task: Task.idle taskSlot
+  }
 
 updateState
   :: Ref.Ref ComponentState
+  -> Ref.Ref (Task.View ComponentState)
+  -> AVar (Task.Status String Int)
   -> AVar (Task.Status String Int)
   -> Ref.Ref Int
   -> ComponentState
+  -> Task.View ComponentState
   -> Effect Unit
-updateState state updates setterCalls next = do
-  previous <- Ref.read state
+updateState state tasks updates otherUpdates setterCalls next nextTasks = do
+  previousTasks <- Ref.read tasks
   Ref.write next state
+  Ref.write nextTasks tasks
   Ref.modify_ (_ + 1) setterCalls
   let
-    previousStatus = Task.toStatus previous.task
-    nextStatus = Task.toStatus next.task
+    previousStatus = Task.toStatus previousTasks taskSlot
+    nextStatus = Task.toStatus nextTasks taskSlot
+    previousOtherStatus = Task.toStatus previousTasks otherSlot
+    nextOtherStatus = Task.toStatus nextTasks otherSlot
   when (previousStatus /= nextStatus) do
     void $ EffectAVar.tryPut nextStatus updates
+  when (previousOtherStatus /= nextOtherStatus) do
+    void $ EffectAVar.tryPut nextOtherStatus otherUpdates
 
 awaitStatus
   :: String
@@ -169,15 +230,18 @@ makeTimer = do
   pure { duration, gate }
 
 statusOf :: Harness -> Effect (Task.Status String Int)
-statusOf harness = Task.toStatus <<< _.task <$> Ref.read harness.state
+statusOf harness = flip Task.toStatus taskSlot <$> Ref.read harness.tasks
+
+otherStatusOf :: Harness -> Effect (Task.Status String Int)
+otherStatusOf harness = flip Task.toStatus otherSlot <$> Ref.read harness.tasks
 
 spec :: Spec Unit
 spec = describe "state-focused tasks" do
   it "projects status through helpers and lawful prisms" do
-    Task.toStatus (Task.idle :: Task.State String Int) `shouldEqual` Task.Idle
-    Task.toMaybe (Task.idle :: Task.State String Int) `shouldEqual` Nothing
-    Task.isActive (Task.idle :: Task.State String Int) `shouldEqual` false
-    preview (Task.asStatus <<< Task._Idle) (Task.idle :: Task.State String Int) `shouldEqual` Just unit
+    let tasks = TaskTypes.emptyView initialState
+    Task.toStatus tasks taskSlot `shouldEqual` Task.Idle
+    Task.toMaybe tasks taskSlot `shouldEqual` Nothing
+    Task.isActive tasks taskSlot `shouldEqual` false
     preview Task._Idle (Task.Idle :: Task.Status String Int) `shouldEqual` Just unit
     preview Task._Active (Task.Active :: Task.Status String Int) `shouldEqual` Just unit
     preview Task._Failed (Task.Failed "no" :: Task.Status String Int) `shouldEqual` Just "no"
@@ -305,7 +369,215 @@ spec = describe "state-focused tasks" do
       externalAfterRelease `shouldEqual` false
       stateAfterRelease <- liftEffect $ Ref.read harness.state
       stateAfterRelease.elsewhere `shouldEqual` 0
-      Task.toStatus stateAfterRelease.task `shouldEqual` Task.Succeeded 2
+      statusAfterRelease <- liftEffect $ statusOf harness
+      statusAfterRelease `shouldEqual` Task.Succeeded 2
+
+  it "reconciles assigned idle before restart and fences the detached root" do
+    harness <- makeHarness \_ _ -> pure unit
+    Aff.finally (liftEffect $ deactivate harness.runtime) do
+      oldWork <- liftEffect makeGate
+      oldFinalizer <- liftEffect makeGate
+      newWork <- liftEffect makeGate
+      externalWitness <- liftEffect $ Ref.new false
+      oldLaunched <- liftEffect EffectAVar.empty
+      newLaunched <- liftEffect EffectAVar.empty
+
+      liftEffect $ dispatch harness.runtime
+        (RunSupersede (CancellableBody oldWork oldFinalizer externalWitness) oldLaunched)
+      void $ await "assigned-idle old body" oldWork.started
+      awaitStatus "assigned-idle old active" Task.Active harness.updates
+
+      liftEffect $ dispatch harness.runtime
+        (AssignIdleAndStart (WaitBody newWork (Right 11)) newLaunched)
+      void $ await "assigned-idle restart" newLaunched
+      awaitStatus "assigned idle publication" Task.Idle harness.updates
+      void $ await "assigned-idle old finalizer" oldFinalizer.started
+      void $ await "assigned-idle new body" newWork.started
+      restartedStatus <- liftEffect $ statusOf harness
+      restartedStatus `shouldEqual` Task.Active
+      release newWork
+      awaitStatus "assigned-idle new success" (Task.Succeeded 11) harness.updates
+
+      release oldFinalizer
+      void $ await "assigned-idle old settlement" oldFinalizer.settled
+      witness <- liftEffect $ Ref.read externalWitness
+      witness `shouldEqual` false
+      state <- liftEffect $ Ref.read harness.state
+      state.elsewhere `shouldEqual` 0
+      status <- liftEffect $ statusOf harness
+      status `shouldEqual` Task.Succeeded 11
+
+  it "normalizes a restored stale snapshot and cancels the displaced authority" do
+    harness <- makeHarness \_ _ -> pure unit
+    Aff.finally (liftEffect $ deactivate harness.runtime) do
+      first <- liftEffect makeGate
+      currentWork <- liftEffect makeGate
+      currentFinalizer <- liftEffect makeGate
+      externalWitness <- liftEffect $ Ref.new false
+      launched <- liftEffect EffectAVar.empty
+      captured <- liftEffect EffectAVar.empty
+      restored <- liftEffect EffectAVar.empty
+
+      liftEffect $ dispatch harness.runtime (RunSupersede (WaitBody first (Right 1)) launched)
+      void $ await "snapshot first body" first.started
+      awaitStatus "snapshot first active" Task.Active harness.updates
+      liftEffect $ dispatch harness.runtime (CaptureState captured)
+      snapshot <- await "active whole-state snapshot" captured
+
+      liftEffect $ dispatch harness.runtime
+        (RunSupersede (CancellableBody currentWork currentFinalizer externalWitness) launched)
+      void $ await "snapshot current body" currentWork.started
+      void $ await "snapshot old cancellation" first.settled
+      liftEffect $ dispatch harness.runtime (RestoreState snapshot restored)
+      void $ await "stale snapshot restoration" restored
+      void $ await "restored snapshot displaced finalizer" currentFinalizer.started
+      awaitStatus "restored snapshot idle" Task.Idle harness.updates
+
+      release currentFinalizer
+      void $ await "displaced current settlement" currentFinalizer.settled
+      witness <- liftEffect $ Ref.read externalWitness
+      witness `shouldEqual` false
+      state <- liftEffect $ Ref.read harness.state
+      state.elsewhere `shouldEqual` 0
+      status <- liftEffect $ statusOf harness
+      status `shouldEqual` Task.Idle
+
+  it "preserves restored branded terminal state while fencing current work" do
+    harness <- makeHarness \_ _ -> pure unit
+    Aff.finally (liftEffect $ deactivate harness.runtime) do
+      completed <- liftEffect makeGate
+      currentWork <- liftEffect makeGate
+      currentFinalizer <- liftEffect makeGate
+      externalWitness <- liftEffect $ Ref.new false
+      launched <- liftEffect EffectAVar.empty
+      captured <- liftEffect EffectAVar.empty
+      restored <- liftEffect EffectAVar.empty
+
+      liftEffect $ dispatch harness.runtime (RunSupersede (WaitBody completed (Right 4)) launched)
+      void $ await "terminal snapshot body" completed.started
+      awaitStatus "terminal snapshot active" Task.Active harness.updates
+      release completed
+      awaitStatus "terminal snapshot success" (Task.Succeeded 4) harness.updates
+      liftEffect $ dispatch harness.runtime (CaptureState captured)
+      terminalSnapshot <- await "terminal whole-state snapshot" captured
+
+      liftEffect $ dispatch harness.runtime
+        (RunSupersede (CancellableBody currentWork currentFinalizer externalWitness) launched)
+      void $ await "terminal replacement current body" currentWork.started
+      awaitStatus "terminal replacement active" Task.Active harness.updates
+      liftEffect $ dispatch harness.runtime (RestoreState terminalSnapshot restored)
+      void $ await "terminal snapshot restoration" restored
+      void $ await "terminal replacement finalizer" currentFinalizer.started
+      awaitStatus "restored terminal status" (Task.Succeeded 4) harness.updates
+
+      release currentFinalizer
+      void $ await "terminal replacement settlement" currentFinalizer.settled
+      witness <- liftEffect $ Ref.read externalWitness
+      witness `shouldEqual` false
+      state <- liftEffect $ Ref.read harness.state
+      state.elsewhere `shouldEqual` 0
+
+  it "keeps same-typed slots isolated when active state is copied" do
+    harness <- makeHarness \_ _ -> pure unit
+    Aff.finally (liftEffect $ deactivate harness.runtime) do
+      taskWork <- liftEffect makeGate
+      otherWork <- liftEffect makeGate
+      otherAgain <- liftEffect makeGate
+      launched <- liftEffect EffectAVar.empty
+      copied <- liftEffect EffectAVar.empty
+      resetDone <- liftEffect EffectAVar.empty
+
+      liftEffect $ dispatch harness.runtime (RunSupersede (WaitBody taskWork (Right 1)) launched)
+      void $ await "source slot body" taskWork.started
+      awaitStatus "source slot active" Task.Active harness.updates
+      liftEffect $ dispatch harness.runtime (CopyTaskToOther copied)
+      void $ await "copy active into unused slot" copied
+      copiedView <- liftEffect $ Ref.read harness.tasks
+      Task.toStatus copiedView taskSlot `shouldEqual` Task.Active
+      Task.toStatus copiedView otherSlot `shouldEqual` Task.Idle
+
+      liftEffect $ dispatch harness.runtime (ResetOther resetDone)
+      void $ await "reset copied inactive slot" resetDone
+      sourceSettled <- liftEffect $ EffectAVar.tryTake taskWork.settled
+      sourceSettled `shouldEqual` Nothing
+
+      liftEffect $ dispatch harness.runtime (RunOther (WaitBody otherWork (Right 2)) launched)
+      void $ await "independent other slot" otherWork.started
+      awaitStatus "other slot active update" Task.Active harness.otherUpdates
+      sourceWhileOther <- liftEffect $ statusOf harness
+      otherWhileRunning <- liftEffect $ otherStatusOf harness
+      sourceWhileOther `shouldEqual` Task.Active
+      otherWhileRunning `shouldEqual` Task.Active
+      release otherWork
+      awaitStatus "other slot success" (Task.Succeeded 2) harness.otherUpdates
+
+      liftEffect $ dispatch harness.runtime (CopyTaskToOther copied)
+      void $ await "copy active after other completion" copied
+      awaitStatus "copied completed slot becomes idle" Task.Idle harness.otherUpdates
+      sourceAfterCopy <- liftEffect $ statusOf harness
+      sourceAfterCopy `shouldEqual` Task.Active
+
+      liftEffect $ dispatch harness.runtime (RunOther (WaitBody otherAgain (Right 3)) launched)
+      void $ await "other restart after copied state" otherAgain.started
+      awaitStatus "other restart active" Task.Active harness.otherUpdates
+      liftEffect $ dispatch harness.runtime (ResetOther resetDone)
+      void $ await "other reset after restart" resetDone
+      awaitStatus "other reset idle" Task.Idle harness.otherUpdates
+      sourceAfterOtherReset <- liftEffect $ statusOf harness
+      sourceAfterOtherReset `shouldEqual` Task.Active
+      sourceStillRunning <- liftEffect $ EffectAVar.tryTake taskWork.settled
+      sourceStillRunning `shouldEqual` Nothing
+
+      release taskWork
+      awaitStatus "source slot completion" (Task.Succeeded 1) harness.updates
+
+  it "rejects slot identity collisions before mutation or cancellation" do
+    errors <- liftEffect $ Ref.new []
+    raised <- liftEffect EffectAVar.empty
+    harness <- makeHarness \context error -> do
+      let
+        prefix = case context of
+          ActionError _ -> "action: "
+          _ -> "wrong: "
+      Ref.modify_ (_ <> [ prefix <> Exception.message error ]) errors
+      void $ EffectAVar.tryPut unit raised
+    Aff.finally (liftEffect $ deactivate harness.runtime) do
+      authoritative <- liftEffect makeGate
+      sameBrandBody <- liftEffect makeGate
+      differentBrandBody <- liftEffect makeGate
+      launched <- liftEffect EffectAVar.empty
+
+      liftEffect $ dispatch harness.runtime
+        (RunSupersede (WaitBody authoritative (Right 1)) launched)
+      void $ await "collision authoritative body" authoritative.started
+      awaitStatus "collision authoritative active" Task.Active harness.updates
+      callsBefore <- liftEffect $ Ref.read harness.setterCalls
+
+      liftEffect $ dispatch harness.runtime
+        (RunSameBrandCollision (WaitBody sameBrandBody (Right 2)))
+      void $ await "same-brand collision" raised
+      shouldNotHaveStarted sameBrandBody
+      firstStillRunning <- liftEffect $ EffectAVar.tryTake authoritative.settled
+      firstStillRunning `shouldEqual` Nothing
+
+      liftEffect $ dispatch harness.runtime
+        (RunDifferentBrandCollision (WaitBody differentBrandBody (Right 3)))
+      void $ await "different-brand collision" raised
+      shouldNotHaveStarted differentBrandBody
+      secondStillRunning <- liftEffect $ EffectAVar.tryTake authoritative.settled
+      secondStillRunning `shouldEqual` Nothing
+      status <- liftEffect $ statusOf harness
+      status `shouldEqual` Task.Active
+      callsAfter <- liftEffect $ Ref.read harness.setterCalls
+      callsAfter `shouldEqual` callsBefore
+
+      actual <- liftEffect $ Ref.read errors
+      actual `shouldEqual`
+        [ "action: Halo task slot \"task\" is already bound to a different state focus"
+        , "action: Halo task slot \"alias\" overlaps state focus bound as \"task\""
+        ]
+      release authoritative
+      awaitStatus "collision authority completion" (Task.Succeeded 1) harness.updates
 
   it "reset publishes Idle immediately and waits for finalizers" do
     harness <- makeHarness \_ _ -> pure unit
@@ -409,24 +681,100 @@ spec = describe "state-focused tasks" do
       awaitStatus "debounce reset idle" Task.Idle harness.updates
       shouldNotHaveStarted body
 
+  it "publishes two-slot normalization before StrictMode onActivate work" do
+    firstTask <- liftEffect makeGate
+    firstOther <- liftEffect makeGate
+    nextTask <- liftEffect makeGate
+    nextOther <- liftEffect makeGate
+    taskGate <- liftEffect $ Ref.new firstTask
+    otherGate <- liftEffect $ Ref.new firstOther
+    snapshots <- liftEffect $ Ref.new []
+    setterCalls <- liftEffect $ Ref.new 0
+    let
+      activationHandlers = defaultHandlers
+        { onActivate = do
+            currentTask <- liftEffect $ Ref.read taskGate
+            currentOther <- liftEffect $ Ref.read otherGate
+            Task.once taskSlot do
+              liftAff $ waitForGate currentTask
+              pure (Right 1)
+            Task.once otherSlot do
+              liftAff $ waitForGate currentOther
+              pure (Right 2)
+        }
+      stateUpdate _ taskView = do
+        Ref.modify_ (_ + 1) setterCalls
+        Ref.modify_
+          ( _ <>
+              [ Tuple
+                  (Task.toStatus taskView taskSlot)
+                  (Task.toStatus taskView otherSlot)
+              ]
+          )
+          snapshots
+    runtime <- liftEffect $ createRuntime identity
+      { initialProps: unit
+      , initialState
+      , spec: { handlers: activationHandlers, onError: \_ _ -> pure unit }
+      , stateUpdate
+      }
+
+    liftEffect $ activate runtime
+    void $ await "first StrictMode task" firstTask.started
+    void $ await "first StrictMode other" firstOther.started
+    beforeCleanup <- liftEffect $ Ref.read snapshots
+    beforeCleanup `shouldEqual`
+      [ Tuple Task.Active Task.Idle
+      , Tuple Task.Active Task.Active
+      ]
+    callsBeforeCleanup <- liftEffect $ Ref.read setterCalls
+
+    liftEffect $ deactivate runtime
+    void $ await "first StrictMode task cancellation" firstTask.settled
+    void $ await "first StrictMode other cancellation" firstOther.settled
+    callsAfterCleanup <- liftEffect $ Ref.read setterCalls
+    callsAfterCleanup `shouldEqual` callsBeforeCleanup
+
+    liftEffect do
+      Ref.write nextTask taskGate
+      Ref.write nextOther otherGate
+      activate runtime
+    void $ await "replayed StrictMode task" nextTask.started
+    void $ await "replayed StrictMode other" nextOther.started
+    afterReplay <- liftEffect $ Ref.read snapshots
+    afterReplay `shouldEqual`
+      [ Tuple Task.Active Task.Idle
+      , Tuple Task.Active Task.Active
+      , Tuple Task.Idle Task.Idle
+      , Tuple Task.Active Task.Idle
+      , Tuple Task.Active Task.Active
+      ]
+    liftEffect $ deactivate runtime
+
   it "normalizes active state without a cleanup setter and republishes before reactivation work" do
     harness <- makeHarness \_ _ -> pure unit
     first <- liftEffect makeGate
+    other <- liftEffect makeGate
     second <- liftEffect makeGate
     launched <- liftEffect EffectAVar.empty
 
     liftEffect $ dispatch harness.runtime (RunOnce (WaitBody first (Right 1)) launched)
     void $ await "pre-deactivation task" first.started
     awaitStatus "pre-deactivation active" Task.Active harness.updates
+    liftEffect $ dispatch harness.runtime (RunOther (WaitBody other (Right 9)) launched)
+    void $ await "pre-deactivation other task" other.started
+    awaitStatus "pre-deactivation other active" Task.Active harness.otherUpdates
     callsBefore <- liftEffect $ Ref.read harness.setterCalls
 
     liftEffect $ deactivate harness.runtime
     void $ await "deactivated task cancellation" first.settled
+    void $ await "deactivated other cancellation" other.settled
     callsAfterCleanup <- liftEffect $ Ref.read harness.setterCalls
     callsAfterCleanup `shouldEqual` callsBefore
 
     liftEffect $ activate harness.runtime
     awaitStatus "reactivation idle publication" Task.Idle harness.updates
+    awaitStatus "reactivation other idle publication" Task.Idle harness.otherUpdates
     liftEffect $ dispatch harness.runtime (RunOnce (WaitBody second (Right 2)) launched)
     void $ await "reactivated once task" second.started
     awaitStatus "reactivated task active" Task.Active harness.updates
@@ -443,26 +791,68 @@ spec = describe "state-focused tasks" do
     terminal `shouldEqual` Task.Succeeded 2
     liftEffect $ deactivate harness.runtime
 
+  it "projects a cross-runtime active snapshot Idle on first render" do
+    source <- makeHarness \_ _ -> pure unit
+    sourceWork <- liftEffect makeGate
+    launched <- liftEffect EffectAVar.empty
+    liftEffect $ dispatch source.runtime (RunSupersede (WaitBody sourceWork (Right 1)) launched)
+    void $ await "cross-runtime source body" sourceWork.started
+    awaitStatus "cross-runtime source active" Task.Active source.updates
+    foreignState <- liftEffect $ Ref.read source.state
+
+    let firstView = TaskTypes.emptyView foreignState
+    Task.toStatus firstView taskSlot `shouldEqual` Task.Idle
+    targetState <- liftEffect $ Ref.new foreignState
+    targetTasks <- liftEffect $ Ref.new firstView
+    target <- liftEffect $ createRuntime identity
+      { initialProps: unit
+      , initialState: foreignState
+      , spec: { handlers, onError: \_ _ -> pure unit }
+      , stateUpdate: \state tasks -> do
+          Ref.write state targetState
+          Ref.write tasks targetTasks
+      }
+    targetWork <- liftEffect makeGate
+    Aff.finally
+      ( liftEffect do
+          deactivate target
+          deactivate source.runtime
+      )
+      do
+        liftEffect do
+          activate target
+          dispatch target (RunOnce (WaitBody targetWork (Right 2)) launched)
+        void $ await "cross-runtime target body" targetWork.started
+        sourceSettled <- liftEffect $ EffectAVar.tryTake sourceWork.settled
+        sourceSettled `shouldEqual` Nothing
+        currentTargetTasks <- liftEffect $ Ref.read targetTasks
+        Task.toStatus currentTargetTasks taskSlot `shouldEqual` Task.Active
+        release targetWork
+        release sourceWork
+
   it "uses the latest state setter for managed completion" do
     harness <- makeHarness \_ _ -> pure unit
     Aff.finally (liftEffect $ deactivate harness.runtime) do
       gate <- liftEffect makeGate
       launched <- liftEffect EffectAVar.empty
       newState <- liftEffect $ Ref.new initialState
+      newTasks <- liftEffect $ Ref.new (TaskTypes.emptyView initialState)
       liftEffect $ dispatch harness.runtime (RunSupersede (WaitBody gate (Right 7)) launched)
       void $ await "setter task body" gate.started
       awaitStatus "setter task active" Task.Active harness.updates
 
       liftEffect $ syncSpec harness.runtime identity
         { spec: { handlers, onError: \_ _ -> pure unit }
-        , stateUpdate: flip Ref.write newState
+        , stateUpdate: \next tasks -> do
+            Ref.write next newState
+            Ref.write tasks newTasks
         }
       release gate
       void $ await "setter task settlement" gate.settled
-      current <- liftEffect $ Ref.read newState
-      Task.toStatus current.task `shouldEqual` Task.Succeeded 7
-      old <- liftEffect $ Ref.read harness.state
-      Task.toStatus old.task `shouldEqual` Task.Active
+      currentTasks <- liftEffect $ Ref.read newTasks
+      Task.toStatus currentTasks taskSlot `shouldEqual` Task.Succeeded 7
+      oldTasks <- liftEffect $ Ref.read harness.tasks
+      Task.toStatus oldTasks taskSlot `shouldEqual` Task.Active
 
   snapshotSpec
 
@@ -485,13 +875,16 @@ type SnapshotState = { task :: Task.State String Int }
 snapshotLens :: Lens' SnapshotState (Task.State String Int)
 snapshotLens = prop (Proxy :: Proxy "task")
 
+snapshotSlot :: Task.Slot "snapshot" SnapshotState String Int
+snapshotSlot = Task.slot (Proxy :: Proxy "snapshot") snapshotLens
+
 data SnapshotAction = LaunchSnapshot Gate Gate (AVar Int)
 
 snapshotHandlers :: Handlers Unit SnapshotState SnapshotAction AppM
 snapshotHandlers = defaultHandlers
   { onAction = \(LaunchSnapshot handlerGate bodyGate result) -> do
       lift $ AppM $ lift $ waitForGate handlerGate
-      Task.supersede snapshotLens do
+      Task.supersede snapshotSlot do
         lift $ AppM $ lift $ waitForGate bodyGate
         environment <- lift readEnvironment
         lift $ AppM $ lift $ void $ AVar.tryPut environment result
@@ -506,9 +899,9 @@ snapshotSpec = describe "managed task interpreter snapshots" do
     result <- liftEffect EffectAVar.empty
     runtime <- liftEffect $ createRuntime (runAppM 1)
       { initialProps: unit
-      , initialState: { task: Task.idle }
+      , initialState: { task: Task.idle snapshotSlot }
       , spec: { handlers: snapshotHandlers, onError: \_ _ -> pure unit }
-      , stateUpdate: \_ -> pure unit
+      , stateUpdate: \_ _ -> pure unit
       }
     Aff.finally (liftEffect $ deactivate runtime) do
       liftEffect do
@@ -517,7 +910,7 @@ snapshotSpec = describe "managed task interpreter snapshots" do
       void $ await "snapshot handler" handlerGate.started
       liftEffect $ syncSpec runtime (runAppM 2)
         { spec: { handlers: snapshotHandlers, onError: \_ _ -> pure unit }
-        , stateUpdate: \_ -> pure unit
+        , stateUpdate: \_ _ -> pure unit
         }
       release handlerGate
       void $ await "snapshot task body" bodyGate.started

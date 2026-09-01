@@ -94,6 +94,9 @@ type State =
 greetingLens :: Lens' State (Task.State String String)
 greetingLens = prop (Proxy :: Proxy "greeting")
 
+greetingSlot :: Task.Slot "greeting" State String String
+greetingSlot = Task.slot (Proxy :: Proxy "greeting") greetingLens
+
 data Action = Load | Cancel
 
 type UI a = Halo.HaloM Props State Action AppM a
@@ -101,15 +104,15 @@ type UI a = Halo.HaloM Props State Action AppM a
 handlers :: Halo.Handlers Props State Action AppM
 handlers = Halo.defaultHandlers
   { onAction = case _ of
-      Load -> Task.supersede greetingLens do
+      Load -> Task.supersede greetingSlot do
         greeting <- lift loadGreeting
         pure (Right greeting)
 
-      Cancel -> Task.reset greetingLens
+      Cancel -> Task.reset greetingSlot
   }
 ```
 
-A task body is ordinary `HaloM` and returns `Either error result`. `supersede` makes the new invocation authoritative immediately; `reset` cancels active work and waits for its Aff finalizers. Rendering sees only `Idle`, `Active`, `Failed error`, or `Succeeded result`; hidden run identity prevents stale completion from overwriting newer state.
+A slot is an opaque identity-bearing optic for one task field. The type-level name distinguishes same-typed fields; it does not store a body, input, or cancellation key. A task body is ordinary `HaloM` and returns `Either error result`. `supersede` makes the new invocation authoritative immediately; `reset` cancels active work and waits for its Aff finalizers.
 
 `lift` is `Control.Monad.Trans.Class.lift`. Each handler captures the interpreter current when it starts. Managed tasks and forks inherit their launching handler's interpreter, even if React renders with a newer interpreter before their bodies begin.
 
@@ -119,22 +122,22 @@ Supply the interpreter when creating the component:
 loadButton :: Env -> Component Props
 loadButton env = Halo.component "LoadButton" (runAppM env)
   { initialState: \_ ->
-      { greeting: Task.idle }
+      { greeting: Task.idle greetingSlot }
   , handlers
   , onError: \_ error ->
       Console.error $ "Unexpected Halo error: " <> message error
-  , render: \{ props, state, dispatch } ->
+  , render: \{ props, tasks, dispatch } ->
       R.div_
         [ R.text props.title
         , R.button
             { onClick: capture_ (dispatch Load)
-            , children: [ R.text if Task.isActive state.greeting then "Restart" else "Load" ]
+            , children: [ R.text if Task.isActive tasks greetingSlot then "Restart" else "Load" ]
             }
         , R.button
             { onClick: capture_ (dispatch Cancel)
             , children: [ R.text "Cancel" ]
             }
-        , R.text $ case Task.toStatus state.greeting of
+        , R.text $ case Task.toStatus tasks greetingSlot of
             Task.Idle -> "Not loaded"
             Task.Active -> "Loading…"
             Task.Failed error -> error
@@ -142,6 +145,8 @@ loadButton env = Halo.component "LoadButton" (runAppM env)
         ]
   }
 ```
+
+`state` and `tasks` come from one coherent render snapshot. `Task.State` values can be copied as ordinary component data, but only the canonical slot with matching runtime authority projects `Active`; stale, foreign, or cross-slot active values project `Idle`.
 
 `initialState` receives the initial props once per mount. Later prop changes call `handlers.onPropsChange`; they do not recreate state.
 
@@ -156,6 +161,7 @@ halo <- Halo.useHalo (runAppM env)
   }
 
 -- halo.state
+-- halo.tasks
 -- halo.dispatch
 ```
 

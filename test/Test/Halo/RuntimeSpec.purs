@@ -102,7 +102,7 @@ makeRuntime environment = liftEffect do
     { initialProps: unit
     , initialState: 0
     , spec: { handlers, onError: \_ _ -> pure unit }
-    , stateUpdate: flip Ref.write state
+    , stateUpdate: \next _ -> Ref.write next state
     }
   activate runtime
   pure { runtime, state }
@@ -119,7 +119,7 @@ spec = describe "application monad and parallelism" do
 
       liftEffect $ syncSpec runtime (runAppM 2)
         { spec: { handlers, onError: \_ _ -> pure unit }
-        , stateUpdate: flip Ref.write state
+        , stateUpdate: \next _ -> Ref.write next state
         }
 
       secondGate <- liftEffect makeGate
@@ -145,7 +145,7 @@ spec = describe "application monad and parallelism" do
 
       liftEffect $ syncSpec runtime (runAppM 2)
         { spec: { handlers, onError: \_ _ -> pure unit }
-        , stateUpdate: flip Ref.write state
+        , stateUpdate: \next _ -> Ref.write next state
         }
 
       release handlerGate

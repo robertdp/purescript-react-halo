@@ -51,7 +51,7 @@ spec = describe "scope, handlers, and component-owned forks" do
                   }
               , onError: \_ _ -> pure unit
               }
-          , stateUpdate: flip Ref.write state
+          , stateUpdate: \next _ -> Ref.write next state
           } :: Effect (Runtime Unit Int ScopeAction Aff)
       )
 
@@ -100,7 +100,7 @@ spec = describe "scope, handlers, and component-owned forks" do
                   }
               , onError: \_ _ -> pure unit
               }
-          , stateUpdate: flip Ref.write state
+          , stateUpdate: \next _ -> Ref.write next state
           } :: Effect (Runtime Unit Int ReplayAction Aff)
       )
 
@@ -133,7 +133,7 @@ spec = describe "scope, handlers, and component-owned forks" do
                   }
               , onError: \_ _ -> pure unit
               }
-          , stateUpdate: \_ -> pure unit
+          , stateUpdate: \_ _ -> pure unit
           } :: Effect (Runtime Int Unit Unit Aff)
       )
 
@@ -159,7 +159,7 @@ spec = describe "scope, handlers, and component-owned forks" do
                   }
               , onError: \_ _ -> pure unit
               }
-          , stateUpdate: flip Ref.write state
+          , stateUpdate: \next _ -> Ref.write next state
           } :: Effect (Runtime Int Int Unit Aff)
       )
 
@@ -192,7 +192,7 @@ spec = describe "scope, handlers, and component-owned forks" do
                   }
               , onError: \_ _ -> pure unit
               }
-          , stateUpdate: flip Ref.write state
+          , stateUpdate: \next _ -> Ref.write next state
           } :: Effect (Runtime Unit Int ForkAction Aff)
       )
 
@@ -237,7 +237,7 @@ spec = describe "scope, handlers, and component-owned forks" do
                   }
               , onError: \_ _ -> pure unit
               }
-          , stateUpdate: flip Ref.write state
+          , stateUpdate: \next _ -> Ref.write next state
           } :: Effect (Runtime Unit Int CancelAction Aff)
       )
 
@@ -277,7 +277,7 @@ spec = describe "scope, handlers, and component-owned forks" do
           { initialProps: unit
           , initialState: 0
           , spec: { handlers: oldHandlers, onError: \_ _ -> pure unit }
-          , stateUpdate: flip Ref.write state
+          , stateUpdate: \next _ -> Ref.write next state
           } :: Effect (Runtime Unit Int RefreshAction Aff)
       )
 
@@ -286,7 +286,7 @@ spec = describe "scope, handlers, and component-owned forks" do
         activate runtime
         syncSpec runtime identityAff
           { spec: { handlers: newHandlers, onError: \_ _ -> pure unit }
-          , stateUpdate: flip Ref.write state
+          , stateUpdate: \next _ -> Ref.write next state
           }
         dispatch runtime Refresh
       void $ await "new action handler" newCompleted

@@ -48,6 +48,9 @@ type State =
 greetingLens :: Lens' State (Task.State String String)
 greetingLens = prop (Proxy :: Proxy "greeting")
 
+greetingSlot :: Task.Slot "greeting" State String String
+greetingSlot = Task.slot (Proxy :: Proxy "greeting") greetingLens
+
 data Action
   = Load
   | Cancel
@@ -57,30 +60,30 @@ type UI a = Halo.HaloM Props State Action AppM a
 handlers :: Halo.Handlers Props State Action AppM
 handlers = Halo.defaultHandlers
   { onAction = case _ of
-      Load -> Task.supersede greetingLens do
+      Load -> Task.supersede greetingSlot do
         greeting <- lift loadGreeting
         pure (Right greeting)
-      Cancel -> Task.reset greetingLens
+      Cancel -> Task.reset greetingSlot
   }
 
 loadButton :: Env -> Component Props
 loadButton env = Halo.component "LoadButton" (runAppM env)
-  { initialState: \_ -> { greeting: Task.idle }
+  { initialState: \_ -> { greeting: Task.idle greetingSlot }
   , handlers
   , onError: \_ error ->
       Console.error $ "Unexpected Halo error: " <> message error
-  , render: \{ props, state, dispatch } ->
+  , render: \{ props, tasks, dispatch } ->
       R.div_
         [ R.text props.title
         , R.button
             { onClick: capture_ (dispatch Load)
-            , children: [ R.text if Task.isActive state.greeting then "Restart" else "Load" ]
+            , children: [ R.text if Task.isActive tasks greetingSlot then "Restart" else "Load" ]
             }
         , R.button
             { onClick: capture_ (dispatch Cancel)
             , children: [ R.text "Cancel" ]
             }
-        , R.text $ case Task.toStatus state.greeting of
+        , R.text $ case Task.toStatus tasks greetingSlot of
             Task.Idle -> "Not loaded"
             Task.Active -> "Loading…"
             Task.Failed error -> error
@@ -94,7 +97,7 @@ useExample
   -> Hook (Halo.UseHalo Props State Action AppM) (Halo.HaloResult State Action)
 useExample env props = Halo.useHalo (runAppM env)
   { props
-  , initialState: { greeting: Task.idle }
+  , initialState: { greeting: Task.idle greetingSlot }
   , handlers
   , onError: \_ _ -> pure unit
   }

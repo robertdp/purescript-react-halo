@@ -51,6 +51,9 @@ data SearchAction = Search String | CancelSearch
 searchLens :: Lens' SearchState (Task.State String Int)
 searchLens = prop (Proxy :: Proxy "search")
 
+searchSlot :: Task.Slot "search" SearchState String Int
+searchSlot = Task.slot (Proxy :: Proxy "search") searchLens
+
 retryingSearch :: String -> Aff (Either String Int)
 retryingSearch _ = pure (Right 1)
 
@@ -58,13 +61,13 @@ searchHandler
   :: SearchAction
   -> Halo.HaloM Unit SearchState SearchAction Aff Unit
 searchHandler = case _ of
-  Search query -> Task.debounce searchLens (Milliseconds 250.0) do
+  Search query -> Task.debounce searchSlot (Milliseconds 250.0) do
     modify_ _ { query = query }
     lift (retryingSearch query)
-  CancelSearch -> Task.reset searchLens
+  CancelSearch -> Task.reset searchSlot
 
-renderSearch :: SearchState -> String
-renderSearch state = case Task.toStatus state.search of
+renderSearch :: Task.View SearchState -> String
+renderSearch tasks = case Task.toStatus tasks searchSlot of
   Task.Idle -> "Search"
   Task.Active -> "Searching"
   Task.Failed error -> error

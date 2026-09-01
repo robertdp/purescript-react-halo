@@ -37,7 +37,7 @@ spec = describe "subscriptions, cleanup, and errors" do
       { initialProps: unit
       , initialState: Nothing
       , spec: { handlers: subscriptionHandlers, onError: \_ _ -> pure unit }
-      , stateUpdate: \_ -> pure unit
+      , stateUpdate: \_ _ -> pure unit
       }
 
     Aff.finally (liftEffect $ deactivate runtime) do
@@ -73,7 +73,7 @@ spec = describe "subscriptions, cleanup, and errors" do
               Ref.modify_ (_ <> [ label <> ": " <> Exception.message error ]) errors
               void $ EffectAVar.tryPut unit releaseFailed
           }
-      , stateUpdate: \_ -> pure unit
+      , stateUpdate: \_ _ -> pure unit
       }
 
     liftEffect do
@@ -104,7 +104,7 @@ spec = describe "subscriptions, cleanup, and errors" do
               { handlers: staleCleanupHandlers
               , onError: \_ _ -> pure unit
               }
-          , stateUpdate: \_ -> pure unit
+          , stateUpdate: \_ _ -> pure unit
           } :: Effect (Runtime Unit Unit StaleCleanupAction Aff)
       )
 
@@ -129,7 +129,7 @@ spec = describe "subscriptions, cleanup, and errors" do
       { initialProps: unit
       , initialState: Nothing
       , spec: { handlers: subscriptionHandlers, onError: \_ _ -> pure unit }
-      , stateUpdate: \_ -> pure unit
+      , stateUpdate: \_ _ -> pure unit
       }
 
     liftEffect do
@@ -159,7 +159,7 @@ spec = describe "subscriptions, cleanup, and errors" do
       { initialProps: unit
       , initialState: Nothing
       , spec: { handlers: subscriptionHandlers, onError: \_ _ -> pure unit }
-      , stateUpdate: flip Ref.write state
+      , stateUpdate: \next _ -> Ref.write next state
       }
 
     Aff.finally (liftEffect $ deactivate runtime) do
@@ -186,7 +186,7 @@ spec = describe "subscriptions, cleanup, and errors" do
       { initialProps: unit
       , initialState: Nothing
       , spec: { handlers: subscriptionHandlers, onError: \_ _ -> pure unit }
-      , stateUpdate: flip Ref.write state
+      , stateUpdate: \next _ -> Ref.write next state
       }
 
     Aff.finally (liftEffect $ deactivate runtime) do
@@ -222,7 +222,7 @@ spec = describe "subscriptions, cleanup, and errors" do
           { handlers: subscriptionHandlers
           , onError: onCleanupError oldErrors
           }
-      , stateUpdate: flip Ref.write state
+      , stateUpdate: \next _ -> Ref.write next state
       }
 
     liftEffect do
@@ -246,7 +246,7 @@ spec = describe "subscriptions, cleanup, and errors" do
             { handlers: subscriptionHandlers
             , onError: onCleanupError cleanupErrors
             }
-        , stateUpdate: flip Ref.write state
+        , stateUpdate: \next _ -> Ref.write next state
         }
       deactivate runtime
     void $ await "running action cancellation" gate.settled
@@ -280,7 +280,7 @@ spec = describe "subscriptions, cleanup, and errors" do
           { initialProps: unit
           , initialState: 0
           , spec: { handlers, onError: \_ _ -> pure unit }
-          , stateUpdate: flip Ref.write state
+          , stateUpdate: \next _ -> Ref.write next state
           } :: Effect (Runtime Unit Int StaleAction Aff)
       )
 
@@ -321,7 +321,7 @@ spec = describe "subscriptions, cleanup, and errors" do
                 Ref.modify_ (_ <> [ label <> ": " <> Exception.message error ]) newErrors
                 void $ EffectAVar.tryPut unit newRaised
             }
-        , stateUpdate: \_ -> pure unit
+        , stateUpdate: \_ _ -> pure unit
         }
       release gate
       void $ await "latest action error callback" newRaised
@@ -350,7 +350,7 @@ spec = describe "subscriptions, cleanup, and errors" do
                   Ref.modify_ (_ <> [ label <> ": " <> Exception.message error ]) errors
                   void $ EffectAVar.tryPut unit raised
               }
-          , stateUpdate: \_ -> pure unit
+          , stateUpdate: \_ _ -> pure unit
           } :: Effect (Runtime Unit Unit ErrorAction Aff)
       )
 
@@ -433,5 +433,5 @@ makeErrorRuntime errors = createRuntime identityAff
       { handlers: errorHandlers
       , onError: \_ error -> Ref.modify_ (_ <> [ Exception.message error ]) errors
       }
-  , stateUpdate: \_ -> pure unit
+  , stateUpdate: \_ _ -> pure unit
   }

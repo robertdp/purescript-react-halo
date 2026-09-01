@@ -2,10 +2,13 @@ module React.Halo.Internal.Types
   ( CleanupId(..)
   , ErrorContext(..)
   , ForkId(..)
+  , RuntimeId(..)
   , SubscriptionId(..)
   ) where
 
 import Prelude
+
+import Effect.Ref (Ref)
 
 -- | Identifies synchronous cleanup in one React activation. Its constructor is
 -- | hidden from the root `React.Halo` API.
@@ -29,6 +32,9 @@ data ErrorContext props action
   | ActionError action
   | ForkError ForkId
   | DeactivationError
+
+-- Runtime identity used only by internal ownership tokens.
+newtype RuntimeId = RuntimeId (Ref Unit)
 
 -- | Identifies a component-owned process created with `fork`. Its constructor
 -- | is hidden from the root `React.Halo` API.

@@ -16,6 +16,8 @@ import React.Basic.Hooks (Hook, UseEffect, UseMemo, UseState)
 import React.Basic.Hooks as React
 import React.Halo.Handlers (Handlers)
 import React.Halo.Internal.Runtime (Runtime, activate, createRuntime, deactivate, dispatch, syncSpec, updateProps)
+import React.Halo.Internal.Task.Types (View)
+import React.Halo.Internal.Task.Types as Task
 import React.Halo.Internal.Types (ErrorContext)
 
 -- | Configuration for `useHalo`.
@@ -31,12 +33,13 @@ type HookSpec props state action m =
   , props :: props
   }
 
--- | Current component state and synchronous action dispatch exposed to
--- | rendering code. Dispatch starts an independent handler root while the
--- | current React activation is active.
+-- | Coherent component state, immutable task-authority view, and synchronous
+-- | action dispatch exposed to rendering code. Dispatch starts an independent
+-- | handler root while the current React activation is active.
 type HaloResult state action =
   { dispatch :: action -> Effect Unit
   , state :: state
+  , tasks :: View state
   }
 
 newtype UseHalo props state action m hooks = UseHalo
@@ -44,7 +47,7 @@ newtype UseHalo props state action m hooks = UseHalo
       ( UseEffect Unit
           ( UseEffect Unit
               ( UseMemo Unit (Runtime props state action m)
-                  (UseState state hooks)
+                  (UseState { state :: state, tasks :: View state } hooks)
               )
           )
       )
@@ -60,9 +63,9 @@ derive instance newtypeUseHalo :: Newtype (UseHalo props state action m hooks) _
 -- | interpreter; existing roots retain their snapshot, and a fork inherits the
 -- | snapshot of the root that launches it.
 -- |
--- | Effect cleanup fences the activation, runs subscription cleanup, and
--- | requests cancellation of every handler and fork. A StrictMode setup replay
--- | creates a fresh usable activation.
+-- | Effect cleanup fences the activation, normalizes managed task state, runs
+-- | synchronous cleanup, and requests cancellation of every handler and fork.
+-- | A StrictMode setup replay publishes normalized state before new work.
 useHalo
   :: forall props state action m
    . (m ~> Aff)
@@ -70,18 +73,21 @@ useHalo
   -> Hook (UseHalo props state action m) (HaloResult state action)
 useHalo runInAff { props, initialState, handlers, onError } =
   React.coerceHook React.do
-    state /\ setState <- React.useState' initialState
+    snapshot /\ setSnapshot <- React.useState'
+      { state: initialState
+      , tasks: Task.emptyView initialState
+      }
     runtime <- React.useMemo unit \_ -> unsafePerformEffect $
       createRuntime runInAff
         { initialProps: props
         , initialState
         , spec: { handlers, onError }
-        , stateUpdate: setState
+        , stateUpdate: \state tasks -> setSnapshot { state, tasks }
         }
     React.useEffectAlways do
       syncSpec runtime runInAff
         { spec: { handlers, onError }
-        , stateUpdate: setState
+        , stateUpdate: \state tasks -> setSnapshot { state, tasks }
         }
       pure mempty
     React.useEffectOnce do
@@ -92,5 +98,6 @@ useHalo runInAff { props, initialState, handlers, onError } =
       pure mempty
     pure
       { dispatch: dispatch runtime
-      , state
+      , state: snapshot.state
+      , tasks: snapshot.tasks
       }

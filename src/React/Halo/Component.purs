@@ -11,13 +11,15 @@ import React.Basic.Hooks (Component, JSX)
 import React.Basic.Hooks as React
 import React.Halo.Handlers (Handlers)
 import React.Halo.Hook (useHalo)
+import React.Halo.Internal.Task.Types (View)
 import React.Halo.Internal.Types (ErrorContext)
 
 -- | Configuration for a complete Halo-owned React component.
 -- |
 -- | `initialState` receives the initial props once per mount. Later prop changes
 -- | start `handlers.onPropsChange` and do not recreate state. The renderer
--- | receives current props and state plus synchronous action dispatch.
+-- | receives current props plus one coherent state/task-view snapshot and
+-- | synchronous action dispatch.
 type ComponentSpec props state action m =
   { handlers :: Handlers props state action m
   , initialState :: props -> state
@@ -26,6 +28,7 @@ type ComponentSpec props state action m =
       { dispatch :: action -> Effect Unit
       , props :: props
       , state :: state
+      , tasks :: View state
       }
       -> JSX
   }
@@ -54,4 +57,5 @@ component name runInAff spec =
       { dispatch: halo.dispatch
       , props
       , state: halo.state
+      , tasks: halo.tasks
       }

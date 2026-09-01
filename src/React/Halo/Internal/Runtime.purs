@@ -10,6 +10,7 @@ module React.Halo.Internal.Runtime
   , fork
   , getProps
   , kill
+  , managedComplete
   , managedReset
   , managedStart
   , registerCleanup
@@ -30,7 +31,7 @@ import Control.Monad.Trans.Class (class MonadTrans, lift)
 import Control.Monad.Writer (class MonadTell, tell)
 import Control.Parallel (class Parallel, parallel, sequential)
 import Data.Either (Either(..))
-import Data.Foldable (traverse_)
+import Data.Foldable (foldM, foldl, traverse_)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..))
@@ -46,7 +47,9 @@ import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Exception as Exception
 import Effect.Ref (Ref)
 import Effect.Ref as Ref
-import React.Halo.Internal.Types (CleanupId(..), ErrorContext(..), ForkId(..), SubscriptionId(..))
+import React.Halo.Internal.Task.Types (Binding, Token, View)
+import React.Halo.Internal.Task.Types as Task
+import React.Halo.Internal.Types (CleanupId(..), ErrorContext(..), ForkId(..), RuntimeId(..), SubscriptionId(..))
 import React.Halo.Subscription (Emitter)
 import React.Halo.Subscription as Subscription
 import Unsafe.Reference (unsafeRefEq)
@@ -118,9 +121,7 @@ instance monadStateHaloM :: MonadState state (HaloM props state action m) where
       let Tuple result newState = updateState oldState
       if current then do
         unless (unsafeRefEq oldState newState) do
-          Ref.write newState runtime.state
-          update <- Ref.read runtime.stateUpdate
-          update newState
+          commitReconciledState execution newState
         pure result
       else pure result
 
@@ -144,18 +145,21 @@ type RuntimeSpec props state action m =
 newtype RunInAff m = RunInAff (m ~> Aff)
 
 newtype Runtime props state action m = Runtime
-  { fresh :: Ref Int
+  { bindings :: Ref (Map String (Binding state))
+  , fresh :: Ref Int
   , needsStatePublish :: Ref Boolean
   , props :: Ref props
   , runInAff :: Ref (RunInAff m)
+  , runtimeId :: RuntimeId
   , scope :: Ref (Maybe Scope)
   , spec :: Ref (RuntimeSpec props state action m)
   , state :: Ref state
-  , stateUpdate :: Ref (state -> Effect Unit)
+  , stateUpdate :: Ref (state -> View state -> Effect Unit)
   }
 
 newtype Scope = Scope
   { active :: Ref Boolean
+  , authorities :: Ref (Map String Token)
   , cleanups :: Ref (Map CleanupId (Effect Unit))
   , forks :: Ref (Map ForkId Root)
   , generation :: Int
@@ -168,7 +172,6 @@ newtype Owner = Owner
 
 newtype Root = Root
   { fiber :: Fiber Unit
-  , onDeactivate :: Effect Unit
   , owner :: Owner
   }
 
@@ -191,23 +194,27 @@ createRuntime
   -> { initialProps :: props
      , initialState :: state
      , spec :: RuntimeSpec props state action m
-     , stateUpdate :: state -> Effect Unit
+     , stateUpdate :: state -> View state -> Effect Unit
      }
   -> Effect (Runtime props state action m)
 createRuntime runInAff input = do
+  bindings <- Ref.new Map.empty
   freshRef <- Ref.new 0
   needsStatePublish <- Ref.new false
   propsRef <- Ref.new input.initialProps
   runInAffRef <- Ref.new (RunInAff runInAff)
+  runtimeIdentity <- RuntimeId <$> Ref.new unit
   scope <- Ref.new Nothing
   spec <- Ref.new input.spec
   state <- Ref.new input.initialState
   stateUpdate <- Ref.new input.stateUpdate
   pure $ Runtime
-    { fresh: freshRef
+    { bindings
+    , fresh: freshRef
     , needsStatePublish
     , props: propsRef
     , runInAff: runInAffRef
+    , runtimeId: runtimeIdentity
     , scope
     , spec
     , state
@@ -221,7 +228,7 @@ syncSpec
    . Runtime props state action m
   -> (m ~> Aff)
   -> { spec :: RuntimeSpec props state action m
-     , stateUpdate :: state -> Effect Unit
+     , stateUpdate :: state -> View state -> Effect Unit
      }
   -> Effect Unit
 syncSpec (Runtime runtime) runInAff input = do
@@ -237,11 +244,12 @@ activate runtime@(Runtime state) = do
     Nothing -> do
       generation <- fresh runtime
       active <- Ref.new true
+      authorities <- Ref.new Map.empty
       cleanups <- Ref.new Map.empty
       forks <- Ref.new Map.empty
       handlers <- Ref.new Map.empty
       subscriptions <- Ref.new Map.empty
-      let scope = Scope { active, cleanups, forks, generation, handlers, subscriptions }
+      let scope = Scope { active, authorities, cleanups, forks, generation, handlers, subscriptions }
       Ref.write (Just scope) state.scope
       publishRuntimeState runtime
       spec <- Ref.read state.spec
@@ -265,7 +273,8 @@ deactivate (Runtime state) = do
       -- Fence every root before normalizing managed state, invoking foreign
       -- cleanup, or requesting cooperative Aff cancellation.
       traverse_ fenceRoot roots
-      traverse_ runRootDeactivation roots
+      Ref.write Map.empty current.authorities
+      normalizeRuntimeState (Runtime state)
       cleanupResults <- traverse Exception.try
         (Map.values cleanups <> Map.values subscriptions)
       traverse_ requestCancel roots
@@ -342,7 +351,6 @@ fork child = HaloM $ ReaderT \execution -> do
       { onComplete: do
           let Scope scope = execution.scope
           Ref.modify_ (Map.delete fid) scope.forks
-      , onDeactivate: pure unit
       , onUnexpected: pure unit
       }
     liftEffect do
@@ -380,100 +388,153 @@ kill fid = HaloM $ ReaderT \execution -> do
       root
 
 -- Internal managed roots support state-focused lifecycle APIs without exposing
--- root identity. Claiming state, fencing prior work, registering the new root,
--- and opening its start gate happen in one synchronous runtime transaction.
+-- root identity. Slot registration, state reconciliation, authority claim,
+-- prior-root fencing, replacement registration, and gate opening form one
+-- synchronous runtime transaction.
 managedStart
   :: forall props state action m
-   . Maybe (Aff Unit)
-  -> ( Int
+   . Binding state
+  -> Maybe (Aff Unit)
+  -> ( RuntimeId
+       -> Int
        -> ForkId
+       -> Maybe Token
        -> state
        -> Maybe
-            { cancel :: Maybe ForkId
+            { cancel :: Maybe Token
             , computation :: HaloM props state action m Unit
-            , onExit :: state -> Maybe state
             , state :: state
+            , token :: Token
             }
      )
   -> HaloM props state action m Unit
-managedStart privateDelay claim = HaloM $ ReaderT \execution ->
+managedStart binding privateDelay claim = HaloM $ ReaderT \execution ->
   liftEffect do
     current <- isCurrent execution
     when current do
-      fid <- ForkId <$> fresh execution.runtime
-      let Scope scope = execution.scope
-      oldState <- readRuntimeState execution.runtime
-      case claim scope.generation fid oldState of
-        Nothing -> pure unit
+      let
+        runtime@(Runtime runtimeState) = execution.runtime
+        Scope scope = execution.scope
+        brand = Task.bindingBrand binding
+      oldState <- Ref.read runtimeState.state
+      registerTaskBinding runtime binding oldState
+      reconciled <- reconcileExecution execution oldState
+      displacedRoots <- takeAndFenceTokens execution.scope reconciled.displaced
+      fid <- ForkId <$> fresh runtime
+      case
+        claim runtimeState.runtimeId scope.generation fid
+          (Map.lookup brand reconciled.authorities)
+          reconciled.state
+        of
+        Nothing -> do
+          Ref.write reconciled.authorities scope.authorities
+          when reconciled.changed do
+            writeAndPublish runtime execution.scope reconciled.state
+          traverse_ requestCancel displacedRoots
         Just managed -> do
-          let
-            applyExit publish = applyManagedState publish execution.runtime managed.onExit
-          prepared <- prepare execution.runInAff execution.runtime execution.scope (ForkError fid)
+          prepared <- prepare execution.runInAff runtime execution.scope (ForkError fid)
             (withPrivateDelay privateDelay managed.computation)
             { onComplete: Ref.modify_ (Map.delete fid) scope.forks
-            , onDeactivate: applyExit false
-            , onUnexpected: applyExit true
+            , onUnexpected: exitManaged runtime execution.scope binding managed.token
             }
-          previous <- Ref.modify'
-            ( \forks ->
-                { state: case managed.cancel of
-                    Nothing -> forks
-                    Just cancelId -> Map.delete cancelId forks
-                , value: managed.cancel >>= flip Map.lookup forks
-                }
-            )
-            scope.forks
-          traverse_ fenceRoot previous
-          writeRuntimeState execution.runtime managed.state
+          previousRoots <- takeAndFenceTokens execution.scope case managed.cancel of
+            Nothing -> []
+            Just token -> [ token ]
+          let authorities = Map.insert brand managed.token reconciled.authorities
+          Ref.write authorities scope.authorities
+          Ref.write managed.state runtimeState.state
           Ref.modify_ (Map.insert fid prepared.root) scope.forks
-          update <- readStateUpdate execution.runtime
-          update managed.state
-          traverse_ requestCancel previous
+          publishState runtime execution.scope managed.state
+          traverse_ requestCancel (displacedRoots <> previousRoots)
           prepared.start
+
+-- Commit a typed managed result only while the canonical focus and runtime
+-- authority both contain the exact token. The root remains tracked until its
+-- ordinary completion finalizer removes it.
+managedComplete
+  :: forall props state action m
+   . Binding state
+  -> Token
+  -> (state -> Maybe state)
+  -> HaloM props state action m Unit
+managedComplete binding token transition = HaloM $ ReaderT \execution ->
+  liftEffect do
+    current <- isCurrent execution
+    when current do
+      let
+        runtime@(Runtime runtimeState) = execution.runtime
+        Scope scope = execution.scope
+        brand = Task.bindingBrand binding
+      authorities <- Ref.read scope.authorities
+      case Map.lookup brand authorities of
+        Just authoritative | Task.sameToken token authoritative -> do
+          oldState <- Ref.read runtimeState.state
+          case transition oldState of
+            Nothing -> pure unit
+            Just newState -> do
+              Ref.write (Map.delete brand authorities) scope.authorities
+              Ref.write newState runtimeState.state
+              publishState runtime execution.scope newState
+        _ -> pure unit
 
 -- Stop managed work after atomically publishing its replacement state. A root
 -- that resets itself is cancelled by unwinding its own fiber rather than trying
 -- to join itself.
 managedReset
   :: forall props state action m
-   . ( Int
+   . Binding state
+  -> ( RuntimeId
+       -> Int
+       -> Maybe Token
        -> state
        -> Maybe
-            { cancel :: Maybe ForkId
+            { cancel :: Maybe Token
             , state :: state
             }
      )
   -> HaloM props state action m Unit
-managedReset transition = HaloM $ ReaderT \execution -> do
+managedReset binding transition = HaloM $ ReaderT \execution -> do
   current <- liftEffect $ isCurrent execution
   when current do
-    root <- liftEffect do
-      let Scope scope = execution.scope
-      oldState <- readRuntimeState execution.runtime
-      case transition scope.generation oldState of
-        Nothing -> pure Nothing
+    cancellation <- liftEffect do
+      let
+        runtime@(Runtime runtimeState) = execution.runtime
+        Scope scope = execution.scope
+        brand = Task.bindingBrand binding
+      oldState <- Ref.read runtimeState.state
+      registerTaskBinding runtime binding oldState
+      reconciled <- reconcileExecution execution oldState
+      displacedRoots <- takeAndFenceTokens execution.scope reconciled.displaced
+      case
+        transition runtimeState.runtimeId scope.generation
+          (Map.lookup brand reconciled.authorities)
+          reconciled.state
+        of
+        Nothing -> do
+          Ref.write reconciled.authorities scope.authorities
+          when reconciled.changed do
+            writeAndPublish runtime execution.scope reconciled.state
+          traverse_ requestCancel displacedRoots
+          pure Nothing
         Just next -> do
-          previous <- Ref.modify'
-            ( \forks ->
-                { state: case next.cancel of
-                    Nothing -> forks
-                    Just cancelId -> Map.delete cancelId forks
-                , value: next.cancel >>= flip Map.lookup forks
-                }
-            )
-            scope.forks
-          traverse_ fenceRoot previous
-          writeRuntimeState execution.runtime next.state
-          update <- readStateUpdate execution.runtime
-          update next.state
-          pure previous
+          root <- takeAndFenceTokens execution.scope case next.cancel of
+            Nothing -> []
+            Just token -> [ token ]
+          let authorities = Map.delete brand reconciled.authorities
+          Ref.write authorities scope.authorities
+          Ref.write next.state runtimeState.state
+          publishState runtime execution.scope next.state
+          traverse_ requestCancel displacedRoots
+          pure case root of
+            [ managedRoot ] -> Just managedRoot
+            _ -> Nothing
     traverse_
       ( \managedRoot ->
           if sameOwner execution.owner managedRoot then
             Aff.throwError scopeCancellationError
           else cancelRootAff managedRoot
       )
-      root
+      cancellation
 
 -- | Register synchronous `Effect` cleanup in the current activation scope.
 -- |
@@ -574,7 +635,6 @@ startHandler runtime@(Runtime state) scope@(Scope current) context computation =
   runInAff <- Ref.read state.runInAff
   prepared <- prepare runInAff runtime scope context computation
     { onComplete: Ref.modify_ (Map.delete runId) current.handlers
-    , onDeactivate: pure unit
     , onUnexpected: pure unit
     }
   Ref.modify_ (Map.insert runId prepared.root) current.handlers
@@ -588,7 +648,6 @@ prepare
   -> ErrorContext props action
   -> HaloM props state action m Unit
   -> { onComplete :: Effect Unit
-     , onDeactivate :: Effect Unit
      , onUnexpected :: Effect Unit
      }
   -> Effect Prepared
@@ -616,7 +675,7 @@ prepare runInAff runtime scope context computation hooks = do
               liftEffect $ spec.onError context error
           Right _ -> pure unit
   pure
-    { root: Root { fiber, onDeactivate: hooks.onDeactivate, owner }
+    { root: Root { fiber, owner }
     , start: Aff.launchAff_ (AVar.put unit gate)
     }
 
@@ -637,43 +696,183 @@ withPrivateDelay privateDelay computation = HaloM $ ReaderT \execution -> do
   traverse_ identity privateDelay
   runHaloM execution computation
 
-applyManagedState
-  :: forall props state action m
-   . Boolean
-  -> Runtime props state action m
-  -> (state -> Maybe state)
-  -> Effect Unit
-applyManagedState publish (Runtime current) transition = do
-  oldState <- Ref.read current.state
-  case transition oldState of
-    Nothing -> pure unit
-    Just newState -> do
-      Ref.write newState current.state
-      if publish then do
-        update <- Ref.read current.stateUpdate
-        update newState
-      else Ref.write true current.needsStatePublish
+type ReconciledState state =
+  { authorities :: Map String Token
+  , changed :: Boolean
+  , displaced :: Array Token
+  , state :: state
+  }
 
-publishRuntimeState :: forall props state action m. Runtime props state action m -> Effect Unit
-publishRuntimeState (Runtime runtime) = do
-  needsPublish <- Ref.read runtime.needsStatePublish
-  when needsPublish do
-    Ref.write false runtime.needsStatePublish
-    currentState <- Ref.read runtime.state
-    update <- Ref.read runtime.stateUpdate
-    update currentState
-
-readRuntimeState :: forall props state action m. Runtime props state action m -> Effect state
-readRuntimeState (Runtime runtime) = Ref.read runtime.state
-
-writeRuntimeState :: forall props state action m. Runtime props state action m -> state -> Effect Unit
-writeRuntimeState (Runtime runtime) = flip Ref.write runtime.state
-
-readStateUpdate
+registerTaskBinding
   :: forall props state action m
    . Runtime props state action m
-  -> Effect (state -> Effect Unit)
-readStateUpdate (Runtime runtime) = Ref.read runtime.stateUpdate
+  -> Binding state
+  -> state
+  -> Effect Unit
+registerTaskBinding (Runtime runtime) binding componentState = do
+  bindings <- Ref.read runtime.bindings
+  let brand = Task.bindingBrand binding
+  case Map.lookup brand bindings of
+    Just existing -> do
+      sameFocus <- Task.sameBindingFocus componentState existing binding
+      unless sameFocus $ Exception.throw $
+        "Halo task slot \"" <> brand <> "\" is already bound to a different state focus"
+    Nothing -> do
+      collision <- foldM
+        ( \found existing -> case found of
+            Just _ -> pure found
+            Nothing -> do
+              sameFocus <- Task.sameBindingFocus componentState existing binding
+              pure if sameFocus then Just (Task.bindingBrand existing) else Nothing
+        )
+        Nothing
+        (Map.values bindings)
+      case collision of
+        Just existingBrand -> Exception.throw $
+          "Halo task slot \"" <> brand <> "\" overlaps state focus bound as \"" <> existingBrand <> "\""
+        Nothing -> Ref.write (Map.insert brand binding bindings) runtime.bindings
+
+reconcileExecution
+  :: forall props state action m
+   . Execution props state action m
+  -> state
+  -> Effect (ReconciledState state)
+reconcileExecution execution componentState = do
+  let
+    Runtime runtime = execution.runtime
+    Scope scope = execution.scope
+  bindings <- Ref.read runtime.bindings
+  authorities <- Ref.read scope.authorities
+  pure $ reconcileBindings bindings authorities componentState
+
+reconcileBindings
+  :: forall state
+   . Map String (Binding state)
+  -> Map String Token
+  -> state
+  -> ReconciledState state
+reconcileBindings bindings authorities componentState =
+  foldl reconcileOne
+    { authorities
+    , changed: false
+    , displaced: []
+    , state: componentState
+    }
+    (Map.values bindings)
+  where
+  reconcileOne current binding =
+    let
+      brand = Task.bindingBrand binding
+      result = Task.reconcileBinding binding (Map.lookup brand current.authorities) current.state
+      nextAuthorities = case result.authority of
+        Nothing -> Map.delete brand current.authorities
+        Just token -> Map.insert brand token current.authorities
+      displaced = case result.displaced of
+        Nothing -> current.displaced
+        Just token -> current.displaced <> [ token ]
+    in
+      { authorities: nextAuthorities
+      , changed: current.changed || result.changed || case result.displaced of
+          Nothing -> false
+          Just _ -> true
+      , displaced
+      , state: result.state
+      }
+
+commitReconciledState
+  :: forall props state action m
+   . Execution props state action m
+  -> state
+  -> Effect Unit
+commitReconciledState execution proposedState = do
+  let
+    runtime@(Runtime runtimeState) = execution.runtime
+    Scope scope = execution.scope
+  reconciled <- reconcileExecution execution proposedState
+  displacedRoots <- takeAndFenceTokens execution.scope reconciled.displaced
+  Ref.write reconciled.authorities scope.authorities
+  Ref.write reconciled.state runtimeState.state
+  publishState runtime execution.scope reconciled.state
+  traverse_ requestCancel displacedRoots
+
+normalizeRuntimeState :: forall props state action m. Runtime props state action m -> Effect Unit
+normalizeRuntimeState (Runtime runtime) = do
+  bindings <- Ref.read runtime.bindings
+  currentState <- Ref.read runtime.state
+  let reconciled = reconcileBindings bindings Map.empty currentState
+  when reconciled.changed do
+    Ref.write reconciled.state runtime.state
+    Ref.write true runtime.needsStatePublish
+
+exitManaged
+  :: forall props state action m
+   . Runtime props state action m
+  -> Scope
+  -> Binding state
+  -> Token
+  -> Effect Unit
+exitManaged runtime@(Runtime runtimeState) scope@(Scope scopeState) binding token = do
+  authorities <- Ref.read scopeState.authorities
+  let brand = Task.bindingBrand binding
+  case Map.lookup brand authorities of
+    Just current | Task.sameToken token current -> do
+      oldState <- Ref.read runtimeState.state
+      case Task.clearBinding binding token oldState of
+        Nothing -> pure unit
+        Just newState -> do
+          Ref.write (Map.delete brand authorities) scopeState.authorities
+          Ref.write newState runtimeState.state
+          publishState runtime scope newState
+    _ -> pure unit
+
+publishRuntimeState :: forall props state action m. Runtime props state action m -> Effect Unit
+publishRuntimeState runtime@(Runtime runtimeState) = do
+  needsPublish <- Ref.read runtimeState.needsStatePublish
+  when needsPublish do
+    Ref.write false runtimeState.needsStatePublish
+    currentState <- Ref.read runtimeState.state
+    activeScope <- Ref.read runtimeState.scope
+    case activeScope of
+      Nothing -> pure unit
+      Just scope -> publishState runtime scope currentState
+
+writeAndPublish
+  :: forall props state action m
+   . Runtime props state action m
+  -> Scope
+  -> state
+  -> Effect Unit
+writeAndPublish runtime@(Runtime runtimeState) scope componentState = do
+  Ref.write componentState runtimeState.state
+  publishState runtime scope componentState
+
+publishState
+  :: forall props state action m
+   . Runtime props state action m
+  -> Scope
+  -> state
+  -> Effect Unit
+publishState (Runtime runtime) (Scope scope) componentState = do
+  authorities <- Ref.read scope.authorities
+  update <- Ref.read runtime.stateUpdate
+  update componentState (Task.makeView componentState authorities)
+
+takeAndFenceTokens :: Scope -> Array Token -> Effect (Array Root)
+takeAndFenceTokens (Scope scope) = foldM takeOne []
+  where
+  takeOne roots token = do
+    let fid = Task.tokenForkId token
+    root <- Ref.modify'
+      ( \forks ->
+          { state: Map.delete fid forks
+          , value: Map.lookup fid forks
+          }
+      )
+      scope.forks
+    traverse_ fenceRoot root
+    pure $ roots <> case root of
+      Nothing -> []
+      Just managedRoot -> [ managedRoot ]
 
 createOwner :: Effect Owner
 createOwner = do
@@ -684,9 +883,6 @@ fenceRoot :: Root -> Effect Unit
 fenceRoot (Root root) = do
   let Owner owner = root.owner
   Ref.write false owner.alive
-
-runRootDeactivation :: Root -> Effect Unit
-runRootDeactivation (Root root) = root.onDeactivate
 
 sameOwner :: Owner -> Root -> Boolean
 sameOwner (Owner left) (Root right) = case right.owner of

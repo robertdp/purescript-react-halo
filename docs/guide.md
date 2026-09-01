@@ -96,7 +96,7 @@ Capture props before asynchronous work when that work must use one render's valu
 
 ## Store typed task outcomes in component state
 
-Import `React.Halo.Task` qualified when component state should retain the lifecycle and typed result of owned work. `Task.State error result` is abstract because it includes hidden cancellation identity. Locate it with a standard lens:
+Import `React.Halo.Task` qualified when component state should retain the lifecycle and typed result of owned work. Pair each `Task.State error result` field with an opaque branded slot built from a type-level name and standard lens:
 
 ```purescript
 import Data.Lens (Lens')
@@ -112,41 +112,48 @@ type State =
 searchLens :: Lens' State (Task.State SearchError Results)
 searchLens = prop (Proxy :: Proxy "search")
 
+searchSlot :: Task.Slot "search" State SearchError Results
+searchSlot = Task.slot (Proxy :: Proxy "search") searchLens
+
 initialState =
-  { search: Task.idle
+  { search: Task.idle searchSlot
   , query: ""
   }
 ```
 
+`Task.State` remains ordinary, freely copyable component data; it cannot by itself prove ownership of a live root. `Task.View` validates the canonical slot against an immutable runtime authority snapshot. Copying active state to another slot, restoring stale state, or supplying state from another runtime therefore projects `Idle` and cannot cross-cancel authoritative work.
+
+A slot name must identify exactly one state focus for the runtime lifetime, and one focus cannot use multiple names. Halo validates the lawful lenses on first use. A collision fails before state mutation or cancellation and follows the current handler or fork error context.
+
 A policy body remains ordinary `HaloM` and returns `Either error result`. It may update other component state. Halo atomically stores a matching `Left` as `Failed` or `Right` as `Succeeded`:
 
 ```purescript
-Search query -> Task.supersede searchLens do
+Search query -> Task.supersede searchSlot do
   modify_ _ { query = query }
   lift (Search.run query)
 
-CancelSearch -> Task.reset searchLens
+CancelSearch -> Task.reset searchSlot
 ```
 
 Choose a policy by invocation semantics:
 
-- `once lens body` starts only from `Idle`; success and typed failure remain terminal until `reset`.
-- `startIfInactive lens body` ignores a call while active, but starts from `Idle`, `Failed`, or `Succeeded`.
-- `supersede lens body` makes every new call authoritative immediately. Prior work is fenced and cancellation is requested without waiting, so its finalizers may overlap the new body but cannot commit Halo state or begin another lifted application effect.
-- `debounce lens milliseconds body` is trailing-edge latest-wins. Its private timer and body both render as `Active`; a new call cancels either phase. Nonpositive durations use a scheduled zero delay.
-- `reset lens` publishes `Idle`, cancels active work, and waits for its Aff finalizers. Terminal state is cleared immediately.
+- `once slot body` starts only from `Idle`; success and typed failure remain terminal until `reset`.
+- `startIfInactive slot body` ignores a call while active, but starts from `Idle`, `Failed`, or `Succeeded`.
+- `supersede slot body` makes every new call authoritative immediately. Prior work is fenced and cancellation is requested without waiting, so its finalizers may overlap the new body but cannot commit Halo state or begin another lifted application effect.
+- `debounce slot milliseconds body` is trailing-edge latest-wins. Its private timer and body both render as `Active`; a new call cancels either phase. Nonpositive durations use a scheduled zero delay.
+- `reset slot` publishes `Idle`, cancels active work, and waits for its Aff finalizers. Terminal state is cleared immediately.
 
 Render through the read-only projection:
 
 ```purescript
-case Task.toStatus state.search of
+case Task.toStatus tasks searchSlot of
   Task.Idle -> renderPrompt
   Task.Active -> renderSpinner
   Task.Failed error -> renderError error
   Task.Succeeded results -> renderResults results
 ```
 
-`Task.asStatus` is a standard read-only getter, and `_Idle`, `_Active`, `_Failed`, and `_Succeeded` are lawful prisms over `Task.Status`. `Task.toMaybe` returns only a succeeded result; `Task.isActive` covers both the private debounce timer and the executing body.
+A component renderer receives `tasks :: Task.View State` beside `state`; `useHalo` returns the same view. The state and view are one coherent immutable React snapshot. `Task.toMaybe tasks slot` returns only a succeeded result, and `Task.isActive tasks slot` covers both the private debounce timer and executing body. `_Idle`, `_Active`, `_Failed`, and `_Succeeded` remain lawful prisms over `Task.Status`.
 
 Expected failures belong in `Either`. An unexpected exception returns the matching task to `Idle` and is reported through the latest `onError` as `ForkError`. Cancellation is neither a typed failure nor an unexpected error. Put retry policy in AppM and lift the already-retrying computation; when nested under `debounce`, the debounce timer runs once and AppM then owns its attempts. A retry loop must let Aff cancellation propagate rather than catching every exception.
 
@@ -267,9 +274,9 @@ Halo selects the latest `onError` callback when reporting a failure. Expected do
 
 ## Choose `component` or `useHalo`
 
-Use `Halo.component` when Halo owns the complete component. Its renderer receives `{ props, state, dispatch }`. `initialState` receives initial props once per mount; synchronize later prop changes in `onPropsChange`.
+Use `Halo.component` when Halo owns the complete component. Its renderer receives `{ props, state, tasks, dispatch }`. `initialState` receives initial props once per mount; synchronize later prop changes in `onPropsChange`.
 
-Use `Halo.useHalo` when other React hooks share the render function. It accepts the same application interpreter and returns `{ state, dispatch }`.
+Use `Halo.useHalo` when other React hooks share the render function. It accepts the same application interpreter and returns `{ state, tasks, dispatch }`.
 
 ## Common mistakes
 
